@@ -1,0 +1,1 @@
+{"code":"batch_failed","command":"ocr","exitCode":1,"kind":"runtime","message":"one or more inputs failed","schema":"mac-ocr.error","schemaVersion":1}

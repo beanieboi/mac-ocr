@@ -1,0 +1,26 @@
+[
+  {
+    "height" : 100,
+    "observations" : [
+      {
+        "boundingBox" : {
+          "height" : 0.3,
+          "width" : 0.4,
+          "x" : 0.0,
+          "y" : 0.3
+        },
+        "confidence" : 1,
+        "requestRevision" : <revision>,
+        "text" : "Hello World"
+      }
+    ],
+    "page" : 1,
+    "pageCount" : 1,
+    "source" : {
+      "path" : "<package-root>\/Tests\/fixtures\/hello.png",
+      "type" : "file"
+    },
+    "text" : "Hello World",
+    "width" : 400
+  }
+]

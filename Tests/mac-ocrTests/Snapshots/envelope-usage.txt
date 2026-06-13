@@ -1,0 +1,1 @@
+{"code":"usage_error","command":"ocr","exitCode":64,"kind":"usage","message":"The value 'abc' is invalid for '--confidence <confidence>'","schema":"mac-ocr.error","schemaVersion":1}

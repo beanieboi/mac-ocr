@@ -1,0 +1,146 @@
+import Foundation
+import PDFKit
+import Testing
+
+/// Output routing for `searchable-pdf`: per-input by default with a
+/// `[name].ocr.pdf` name, `-o` templates/directories, single-destination
+/// (static path / stdout) restricted to one input, and stdout via `-o -`.
+@Suite(.serialized) struct SearchablePDFOutputTests {
+
+	@Test func defaultWritesOcrPdfAlongsideInput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", input])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+		let expected = directory + "/hello.ocr.pdf"
+		#expect(FileManager.default.fileExists(atPath: expected), "expected \(expected); dir: \(listing(directory))")
+		let document = try #require(PDFDocument(url: URL(fileURLWithPath: expected)))
+		#expect((document.string ?? "").contains("Hello World"))
+	}
+
+	@Test func multipleInputsEachGetOwnFile() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let a = try stage("hello.png", in: directory)
+		let b = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", a, b])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: directory + "/hello.ocr.pdf"))
+		#expect(FileManager.default.fileExists(atPath: directory + "/document-photo.ocr.pdf"))
+	}
+
+	@Test func templateOutputControlsName() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", input, "-o", directory + "/[name]-searchable.pdf"])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: directory + "/hello-searchable.pdf"))
+	}
+
+	@Test func directoryOutputUsesDefaultName() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+		let outDir = directory + "/out/"
+
+		let result = try TestSupport.run(["searchable-pdf", input, "-o", outDir])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: directory + "/out/hello.ocr.pdf"))
+	}
+
+	@Test func staticPathWithMultipleInputsErrors() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let a = try stage("hello.png", in: directory)
+		let b = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", a, b, "-o", directory + "/one.pdf"])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(!FileManager.default.fileExists(atPath: directory + "/one.pdf"), "must not write a merged file")
+	}
+
+	@Test func stdoutWithMultipleInputsErrors() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let a = try stage("hello.png", in: directory)
+		let b = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", a, b, "-o", "-"])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+	}
+
+	@Test func stdoutSingleInputEmitsPdfBytes() throws {
+		let result = try TestSupport.run(["searchable-pdf", TestSupport.fixturePath("hello.png"), "-o", "-"])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
+	}
+
+	@Test func batchContinuesAfterAFailedInput() throws {
+		// Fail-soft: a bad input is reported but does not abort the batch, so a
+		// good input listed *after* it is still written. Exit is non-zero.
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let bad = try stage("invalid.txt", in: directory)
+		let good = try stage("hello.png", in: directory)
+		let outDir = directory + "/out"
+		try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+
+		let result = try TestSupport.run(["searchable-pdf", bad, good, "-o", outDir + "/"])
+
+		#expect(result.exitCode == 1, "expected partial-failure exit 1; got \(result.exitCode), stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: outDir + "/hello.ocr.pdf"), "good input after a failure must still be written")
+		#expect(!FileManager.default.fileExists(atPath: outDir + "/invalid.ocr.pdf"))
+	}
+
+	@Test func collidingOutputPathsErrorBeforeWriting() throws {
+		// Two different inputs sharing a basename, routed into one directory,
+		// resolve to the same .ocr.pdf. That must error (exit 64) before any
+		// rendering — never silently overwrite one with the other.
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let aDir = directory + "/a"
+		let bDir = directory + "/b"
+		let outDir = directory + "/out"
+		for sub in [aDir, bDir, outDir] {
+			try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+		}
+		try FileManager.default.copyItem(atPath: TestSupport.fixturePath("hello.png"), toPath: aDir + "/scan.png")
+		try FileManager.default.copyItem(atPath: TestSupport.fixturePath("document-photo.png"), toPath: bDir + "/scan.png")
+
+		let result = try TestSupport.run(["searchable-pdf", aDir + "/scan.png", bDir + "/scan.png", "-o", outDir + "/"])
+
+		#expect(result.exitCode == 64, "expected collision usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(!FileManager.default.fileExists(atPath: outDir + "/scan.ocr.pdf"), "must not write before failing")
+	}
+
+	@Test func stdinWithoutExplicitOutputErrors() throws {
+		let data = try Data(contentsOf: URL(fileURLWithPath: TestSupport.fixturePath("multipage.pdf")))
+		// stdin has no filename to derive [name].ocr.pdf from — must require -o.
+		let result = try TestSupport.run(["searchable-pdf", "-"], stdinData: data)
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+	}
+
+	// MARK: - Helpers
+
+	private func makeTempDir() -> String {
+		let path = NSTemporaryDirectory() + "mac-ocr-spdf-out-\(UUID().uuidString)"
+		try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+		return path
+	}
+
+	private func stage(_ fixture: String, in directory: String) throws -> String {
+		let destination = directory + "/" + fixture
+		try FileManager.default.copyItem(atPath: TestSupport.fixturePath(fixture), toPath: destination)
+		return destination
+	}
+
+	private func listing(_ directory: String) -> String {
+		((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).joined(separator: ", ")
+	}
+}

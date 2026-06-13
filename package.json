@@ -1,0 +1,69 @@
+{
+	"name": "mac-ocr",
+	"version": "0.0.0-semantic-release",
+	"description": "macOS CLI for OCR and searchable PDFs using Apple's Vision framework. Recognize text in images and PDFs, stream PDF pages, and add an invisible selectable text layer over scanned pages.",
+	"keywords": [
+		"mac",
+		"macos",
+		"ocr",
+		"text-recognition",
+		"apple-vision",
+		"vision",
+		"pdf",
+		"searchable-pdf",
+		"ocr-pdf",
+		"scanned-pdf",
+		"cli",
+		"native",
+		"swift"
+	],
+	"license": "MIT",
+	"repository": "privatenumber/mac-ocr",
+	"homepage": "https://github.com/privatenumber/mac-ocr#readme",
+	"bugs": "https://github.com/privatenumber/mac-ocr/issues",
+	"author": {
+		"name": "Hiroki Osame",
+		"email": "hiroki.osame@gmail.com"
+	},
+	"files": [
+		"bin",
+		"dist",
+		"docs",
+		"skills"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"bin": {
+		"mac-ocr": "bin/mac-ocr"
+	},
+	"exports": {
+		"types": "./dist/index.d.mts",
+		"default": "./dist/index.mjs"
+	},
+	"packageManager": "pnpm@10.20.0",
+	"scripts": {
+		"build": "node scripts/write-version.mjs && swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize -Xlinker -dead_strip && mkdir -p bin && cp .build/apple/Products/Release/mac-ocr bin/mac-ocr && strip -rSTx bin/mac-ocr && pkgroll",
+		"typecheck": "tsc",
+		"lint": "lintroll --git . && swift format lint --strict --recursive --parallel Sources Tests",
+		"test": "swift test --no-parallel",
+		"test:node": "swift build && mkdir -p bin && cp .build/debug/mac-ocr bin/mac-ocr && node Tests/index.ts",
+		"prepare": "skills-npm",
+		"prepack": "pnpm build && clean-pkg-json"
+	},
+	"os": [
+		"darwin"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"@types/node": "^25.9.3",
+		"clean-pkg-json": "^2.0.0",
+		"fs-fixture": "^2.14.0",
+		"lintroll": "^1.30.2",
+		"manten": "^2.0.0",
+		"pkgroll": "^2.27.0",
+		"skills-npm": "^1.1.1",
+		"typescript": "^6.0.2"
+	}
+}

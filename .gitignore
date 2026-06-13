@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Swift
+.build/
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+
+# Build output
+/bin/
+/dist/
+
+# Node (npm publishing)
+/node_modules/
+*.tgz
+
+# Agent tooling
+.agents/
+.claude/
+.pi/
+
+# Agent skills from npm packages (managed by skills-npm)
+**/skills/npm-*
+
+# searchable-pdf default output, e.g. from ad-hoc runs against fixtures
+Tests/fixtures/*.ocr.pdf

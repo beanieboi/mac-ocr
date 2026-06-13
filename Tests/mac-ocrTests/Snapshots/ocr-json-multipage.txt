@@ -1,0 +1,74 @@
+[
+  {
+    "height" : 400,
+    "observations" : [
+      {
+        "boundingBox" : {
+          "height" : 0.2,
+          "width" : 0.4,
+          "x" : 0.1,
+          "y" : 0.4
+        },
+        "confidence" : 1,
+        "requestRevision" : <revision>,
+        "text" : "Page One"
+      }
+    ],
+    "page" : 1,
+    "pageCount" : 3,
+    "source" : {
+      "path" : "<package-root>\/Tests\/fixtures\/multipage.pdf",
+      "type" : "file"
+    },
+    "text" : "Page One",
+    "width" : 800
+  },
+  {
+    "height" : 400,
+    "observations" : [
+      {
+        "boundingBox" : {
+          "height" : 0.2,
+          "width" : 0.4,
+          "x" : 0.1,
+          "y" : 0.4
+        },
+        "confidence" : 1,
+        "requestRevision" : <revision>,
+        "text" : "Page Two"
+      }
+    ],
+    "page" : 2,
+    "pageCount" : 3,
+    "source" : {
+      "path" : "<package-root>\/Tests\/fixtures\/multipage.pdf",
+      "type" : "file"
+    },
+    "text" : "Page Two",
+    "width" : 800
+  },
+  {
+    "height" : 400,
+    "observations" : [
+      {
+        "boundingBox" : {
+          "height" : 0.2,
+          "width" : 0.4,
+          "x" : 0.1,
+          "y" : 0.4
+        },
+        "confidence" : 1,
+        "requestRevision" : <revision>,
+        "text" : "Page Three"
+      }
+    ],
+    "page" : 3,
+    "pageCount" : 3,
+    "source" : {
+      "path" : "<package-root>\/Tests\/fixtures\/multipage.pdf",
+      "type" : "file"
+    },
+    "text" : "Page Three",
+    "width" : 800
+  }
+]

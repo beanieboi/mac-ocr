@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-26-intel
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build
+        run: swift build
+
+      - name: Swift tests
+        # --no-parallel serializes suites; engine-level unit tests call
+        # Vision in-process while integration tests spawn subprocess
+        # Vision, and parallel test suites compete for the ANE.
+        run: swift test --no-parallel
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Node API tests
+        # test:node copies the debug build to bin/mac-ocr (the wrapper's only
+        # binary location — bin/ is gitignored; prepack rebuilds for release).
+        run: pnpm test:node
