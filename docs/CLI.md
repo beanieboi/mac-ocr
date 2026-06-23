@@ -159,7 +159,7 @@ const ph = obs.boundingBox.height * result.height
 
 ## searchable-pdf
 
-Writes a PDF that looks identical to the source but carries an invisible, selectable OCR text layer. **One searchable PDF per input — inputs are never merged.**
+Writes a PDF that looks identical to the source but carries an invisible, selectable OCR text layer. By default, each input writes its own searchable PDF; pass `--merge` to combine inputs into one PDF.
 
 ```sh
 mac-ocr searchable-pdf scan.pdf                      # writes scan.ocr.pdf
@@ -167,9 +167,12 @@ mac-ocr searchable-pdf *.pdf                          # writes <name>.ocr.pdf fo
 mac-ocr searchable-pdf scan.pdf -o out/               # out/scan.ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'   # scan-ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout
+mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 ```
 
-- **PDF inputs**: each original page is preserved verbatim (vector content is not re-rasterized); only the text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to run OCR.
+By default, one input produces one output PDF. With `--merge`, all inputs are combined into one PDF in the exact argument order provided; `mac-ocr` does not sort or reorder pages. Merged mode expects file/URL inputs and does not support stdin input.
+
+- **PDF inputs**: in non-merge mode, each original page is preserved verbatim (vector content is not re-rasterized); only the text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to run OCR. Merged output always rewrites pages into a new PDF, so annotations, outlines, and document metadata are not preserved in merged PDFs.
 - **Image inputs**: one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 - **stdin** (`-`) requires an explicit `-o` (no filename to derive a name from).
 
@@ -179,7 +182,7 @@ Use `--image-page-dpi <36–2400>` to override image input page sizing when scan
 
 Use `--image-downsample-dpi <36–2400>` to cap the visible image layer resolution for image inputs after page size is known. This can reduce output size while keeping OCR on the original pixels and preserving page size. PDF inputs are not downsampled.
 
-When **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, the whole document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
+In non-merge mode, when **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, or when `--merge` is used, the document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
 
 The "already has text" check is page-level: a scanned page carrying one small digital element (a Bates stamp, fax header, or page number) counts as born-digital and is skipped, leaving its scanned body unsearchable. Two caveats:
 
@@ -197,7 +200,9 @@ The "already has text" check is page-level: a scanned page carrying one small di
 | `-` | single input → stdout (refused on a terminal) |
 | fixed path or `-`, with ≥2 inputs | error — use a directory or `[name]` template |
 
-Also accepts `--ocr-all-pages` (above), `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
+With `--merge`, `-o <file.pdf>` and `-o -` are allowed for multiple inputs. Directory and template outputs are rejected because merged mode writes exactly one PDF.
+
+Also accepts `--ocr-all-pages` (above), `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status
 

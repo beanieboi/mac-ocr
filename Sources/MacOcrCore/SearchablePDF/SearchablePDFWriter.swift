@@ -100,6 +100,141 @@ public enum SearchablePDF {
 		return pdfData as Data
 	}
 
+	/// Render sources into one searchable PDF in the order they are passed.
+	///
+	/// Merged output always rewrites inputs into a new PDF document, so the
+	/// single-PDF verbatim pass-through optimization does not apply.
+	public static func renderMerged(
+		sources: [ImageSource],
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws -> Data {
+		let pdfData = NSMutableData()
+		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
+			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
+		else {
+			throw MessageError("Could not create PDF output context")
+		}
+
+		let completedPages = try await appendMergedSources(
+			sources: sources,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: password,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			into: context,
+			onProgress: onProgress
+		)
+
+		guard completedPages > 0 else {
+			throw MessageError("No pages were produced")
+		}
+
+		context.closePDF()
+		return pdfData as Data
+	}
+
+	public static func writeMerged(
+		sources: [ImageSource],
+		to outputURL: URL,
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws {
+		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
+			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
+		else {
+			throw MessageError("Could not create PDF output context")
+		}
+
+		let completedPages = try await appendMergedSources(
+			sources: sources,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: password,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			into: context,
+			onProgress: onProgress
+		)
+
+		guard completedPages > 0 else {
+			throw MessageError("No pages were produced")
+		}
+
+		context.closePDF()
+	}
+
+	private static func appendMergedSources(
+		sources: [ImageSource],
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String?,
+		ocrAllPages: Bool,
+		imageQuality: Double?,
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?,
+		into context: CGContext,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws -> Int {
+		try validateImageQuality(imageQuality)
+		try validateImageDPI(imagePageDpi, name: "--image-page-dpi")
+		try validateImageDPI(imageDownsampleDpi, name: "--image-downsample-dpi")
+		guard !sources.isEmpty else {
+			throw MessageError("No input sources were provided")
+		}
+
+		var plans: [MergeSourcePlan] = []
+		plans.reserveCapacity(sources.count)
+		for source in sources {
+			plans.append(try await mergeSourcePlan(for: source, password: password))
+		}
+		let totalPages = plans.reduce(0) { $0 + $1.pageCount }
+
+		onProgress?(0, totalPages)
+		var completedBeforeSource = 0
+		for plan in plans {
+			let producer = try await resolveProducer(
+				plan: plan,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
+			let pagesWritten = try await appendSource(
+				producer,
+				displayName: plan.source.displayName,
+				options: options,
+				pdfDpi: pdfDpi,
+				ocrAllPages: ocrAllPages,
+				into: context,
+				onProgress: { done, _ in
+					if done > 0 {
+						onProgress?(completedBeforeSource + done, totalPages)
+					}
+				}
+			)
+			completedBeforeSource += pagesWritten
+		}
+		return completedBeforeSource
+	}
+
 	// MARK: - Source resolution
 
 	private enum PageProducer {
@@ -122,6 +257,12 @@ public enum SearchablePDF {
 		let visiblePDFPage: CGPDFPage
 	}
 
+	private struct MergeSourcePlan {
+		let source: ImageSource
+		let pageCount: Int
+		let data: Data?
+	}
+
 	/// Per-page geometry and OCR decision, computed serially up front on the
 	/// main document so the page-ordered output loop never touches the document
 	/// concurrently with a background render.
@@ -139,6 +280,77 @@ public enum SearchablePDF {
 	/// the main document, so the transfer is safe.
 	private struct Unchecked<T>: @unchecked Sendable {
 		let value: T
+	}
+
+	private static func mergeSourcePlan(for source: ImageSource, password: String?) async throws -> MergeSourcePlan {
+		switch source {
+		case .file(let path):
+			let url = URL(fileURLWithPath: path)
+			guard FileManager.default.fileExists(atPath: url.path) else {
+				throw MessageError("No such file: \(path)")
+			}
+			guard isPDFFile(url: url) else {
+				return MergeSourcePlan(source: source, pageCount: 1, data: nil)
+			}
+			guard let document = CGPDFDocument(url as CFURL) else {
+				throw MessageError("Cannot read PDF: \(path)")
+			}
+			try unlockPDF(document, password: password, label: path)
+			let pageCount = document.numberOfPages
+			guard pageCount > 0 else {
+				throw MessageError("PDF has no pages: \(path)")
+			}
+			return MergeSourcePlan(source: source, pageCount: pageCount, data: nil)
+
+		case .url(let urlString):
+			guard let remoteURL = URL(string: urlString) else {
+				throw MessageError("Invalid URL: \(urlString)")
+			}
+			let data = try await fetchRemoteData(from: remoteURL, label: urlString)
+			guard isPDFData(data) else {
+				return MergeSourcePlan(source: source, pageCount: 1, data: data)
+			}
+			guard let provider = CGDataProvider(data: data as CFData),
+				let document = CGPDFDocument(provider)
+			else {
+				throw MessageError("Cannot read PDF from \(urlString)")
+			}
+			try unlockPDF(document, password: password, label: urlString)
+			let pageCount = document.numberOfPages
+			guard pageCount > 0 else {
+				throw MessageError("PDF has no pages: \(urlString)")
+			}
+			return MergeSourcePlan(source: source, pageCount: pageCount, data: data)
+
+		case .stdin:
+			throw MessageError("--merge does not support stdin input")
+		}
+	}
+
+	private static func resolveProducer(
+		plan: MergeSourcePlan,
+		password: String?,
+		imageQuality: Double?,
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?
+	) async throws -> PageProducer {
+		if let data = plan.data {
+			return try producer(
+				fromData: data,
+				label: plan.source.displayName,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
+		}
+		return try await resolveProducer(
+			plan.source,
+			password: password,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi
+		)
 	}
 
 	// TODO: The rewrite below drops annotations (links, form fields),
