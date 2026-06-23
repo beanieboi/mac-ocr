@@ -2,6 +2,24 @@ import { buildArgs } from './args.ts';
 import { collectStdout, spawnBinary } from './process.ts';
 import type { Input, SearchablePdfOptions } from './types.ts';
 
+const buildSearchablePdfArgs = (options?: SearchablePdfOptions): string[] => {
+	const args = ['searchable-pdf', ...buildArgs(options)];
+	if (options?.ocrAllPages) {
+		args.push('--ocr-all-pages');
+	}
+	if (options?.imageQuality !== undefined) {
+		args.push('--image-quality', String(options.imageQuality));
+	}
+	if (options?.imagePageDpi !== undefined) {
+		args.push('--image-page-dpi', String(options.imagePageDpi));
+	}
+	if (options?.imageDownsampleDpi !== undefined) {
+		args.push('--image-downsample-dpi', String(options.imageDownsampleDpi));
+	}
+	args.push('-o', '-', '-');
+	return args;
+};
+
 /**
  * Produce a searchable PDF from image or PDF bytes — the same content with an
  * invisible, selectable OCR text layer added. Returns the PDF bytes.
@@ -15,19 +33,8 @@ export const createSearchablePdf = async (
 	input: Input,
 	options?: SearchablePdfOptions,
 ): Promise<Uint8Array> => {
-	const args = ['searchable-pdf', ...buildArgs(options)];
-	if (options?.ocrAllPages) {
-		args.push('--ocr-all-pages');
-	}
-	if (options?.imageQuality !== undefined) {
-		args.push('--image-quality', String(options.imageQuality));
-	}
-	if (options?.imagePageDpi !== undefined) {
-		args.push('--image-page-dpi', String(options.imagePageDpi));
-	}
-	args.push('-o', '-', '-');
 	const stdout = await collectStdout(
-		spawnBinary(args, {
+		spawnBinary(buildSearchablePdfArgs(options), {
 			input,
 			signal: options?.signal,
 			password: options?.password,
