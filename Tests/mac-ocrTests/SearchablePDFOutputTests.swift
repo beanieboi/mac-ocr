@@ -146,6 +146,105 @@ import Testing
 		#expect(!FileManager.default.fileExists(atPath: output))
 	}
 
+	@Test func debugMergeWritesJsonlSidecarInArgumentOrder() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let first = try stage("hello.png", in: directory)
+		let second = try stage("document-photo.png", in: directory)
+		let output = directory + "/merged.pdf"
+		let debug = directory + "/merged.jsonl"
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "--merge", "-o", output, first, second],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: output))
+		let records = try jsonlObjects(at: debug)
+		#expect(records.count == 2)
+		#expect(records[0]["outputPage"] as? Int == 1)
+		#expect(records[1]["outputPage"] as? Int == 2)
+		#expect(records[0]["outputPageCount"] as? Int == 2)
+		#expect(records[0]["schema"] as? String == "mac-ocr.searchable-pdf.debug")
+		let firstSource = try #require(records[0]["source"] as? [String: Any])
+		let secondSource = try #require(records[1]["source"] as? [String: Any])
+		#expect((firstSource["path"] as? String)?.hasSuffix("hello.png") == true)
+		#expect((secondSource["path"] as? String)?.hasSuffix("document-photo.png") == true)
+		let firstOcr = try #require(records[0]["ocr"] as? [String: Any])
+		let observations = try #require(firstOcr["observations"] as? [[String: Any]])
+		#expect(!observations.isEmpty)
+		let words = observations.first?["words"] as? [[String: Any]]
+		#expect(words?.isEmpty == false)
+	}
+
+	@Test func debugPerInputBatchWritesOneSidecarPerOutputPDF() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let first = try stage("hello.png", in: directory)
+		let second = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(
+			["searchable-pdf", first, second],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(try jsonlObjects(at: directory + "/hello.ocr.jsonl").count == 1)
+		#expect(try jsonlObjects(at: directory + "/document-photo.ocr.jsonl").count == 1)
+	}
+
+	@Test func debugRejectsStdoutPDFOutput() throws {
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", "-", TestSupport.fixturePath("hello.png")],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("MAC_OCR_DEBUG=1 requires file PDF output"))
+	}
+
+	@Test func debugRejectsSidecarCollidingWithPDFOutput() throws {
+		let output = "mac-ocr-debug-collision-\(UUID().uuidString)/out.JSONL"
+		defer { try? FileManager.default.removeItem(atPath: (output as NSString).deletingLastPathComponent) }
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", output, TestSupport.fixturePath("hello.png")],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("would overwrite a PDF output"))
+		#expect(!FileManager.default.fileExists(atPath: output))
+	}
+
+	@Test func debugBornDigitalPdfWritesSkippedPageRecords() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/born-digital.pdf"
+		let output = directory + "/multipage.ocr.pdf"
+		let debug = directory + "/multipage.ocr.jsonl"
+		try makeBornDigitalPDF().write(to: URL(fileURLWithPath: input))
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", output, input],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let records = try jsonlObjects(at: debug)
+		#expect(records.count == 1)
+		for record in records {
+			let ocr = try #require(record["ocr"] as? [String: Any])
+			#expect(ocr["skipped"] as? Bool == true)
+			#expect(ocr["skipReason"] as? String == "existing-text-layer")
+			let pdfPage = try #require(record["pdfPage"] as? [String: Any])
+			let mediaBox = try #require(pdfPage["mediaBox"] as? [String: Any])
+			#expect(pdfPage["rotation"] as? Int == 90)
+			#expect(mediaBox["x"] as? Double == 10)
+			#expect(mediaBox["y"] as? Double == 20)
+		}
+	}
+
 	@Test func stdoutWithMultipleInputsErrors() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -256,5 +355,48 @@ import Testing
 
 	private func listing(_ directory: String) -> String {
 		((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).joined(separator: ", ")
+	}
+
+	private func jsonlObjects(at path: String) throws -> [[String: Any]] {
+		let text = try String(contentsOfFile: path, encoding: .utf8)
+		return try text.split(separator: "\n").map { line in
+			try #require(
+				JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+				"invalid JSONL record in \(path): \(line)"
+			)
+		}
+	}
+
+	private func makeBornDigitalPDF() -> Data {
+		let stream = "BT /F1 42 Tf 30 70 Td (Hello World) Tj ET"
+		let streamBytes = Array(stream.utf8)
+		var content = Data("%PDF-1.4\n".utf8)
+		var offsets: [Int] = []
+
+		func appendObject(_ body: String) {
+			offsets.append(content.count)
+			content.append(contentsOf: body.utf8)
+		}
+
+		appendObject("1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n")
+		appendObject("2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n")
+		appendObject(
+			"3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [10 20 310 140] /CropBox [10 20 310 140] /Rotate 90 /Resources <</Font <</F1 5 0 R>>>> /Contents 4 0 R>>\nendobj\n"
+		)
+
+		offsets.append(content.count)
+		content.append(contentsOf: "4 0 obj\n<</Length \(streamBytes.count)>>\nstream\n".utf8)
+		content.append(contentsOf: streamBytes)
+		content.append(contentsOf: "\nendstream\nendobj\n".utf8)
+
+		appendObject("5 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n")
+
+		let xrefOffset = content.count
+		content.append(contentsOf: "xref\n0 6\n0000000000 65535 f\r\n".utf8)
+		for offset in offsets {
+			content.append(contentsOf: String(format: "%010d 00000 n\r\n", offset).utf8)
+		}
+		content.append(contentsOf: "trailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n\(xrefOffset)\n%%EOF\n".utf8)
+		return content
 	}
 }
