@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'manten';
 import { serializeRegionOfInterest } from '../../src/args.ts';
 
-await describe('serializeRegionOfInterest', async () => {
-	await test('object form', () => {
+describe('serializeRegionOfInterest', () => {
+	test('object form', () => {
 		expect(serializeRegionOfInterest({
 			x: 0.1,
 			y: 0.2,
@@ -11,15 +11,15 @@ await describe('serializeRegionOfInterest', async () => {
 		})).toBe('0.1,0.2,0.5,0.6');
 	});
 
-	await test('tuple form', () => {
+	test('tuple form', () => {
 		expect(serializeRegionOfInterest([0, 0, 1, 0.5])).toBe('0,0,1,0.5');
 	});
 
-	await test('string passthrough', () => {
+	test('string passthrough', () => {
 		expect(serializeRegionOfInterest('0,0,1,1')).toBe('0,0,1,1');
 	});
 
-	await test('rejects out-of-range coordinates', () => {
+	test('rejects out-of-range coordinates', () => {
 		expect(() => serializeRegionOfInterest({
 			x: -0.1,
 			y: 0,
@@ -28,11 +28,11 @@ await describe('serializeRegionOfInterest', async () => {
 		})).toThrow(/\[0, 1\]/);
 	});
 
-	await test('rejects non-positive dimensions', () => {
+	test('rejects non-positive dimensions', () => {
 		expect(() => serializeRegionOfInterest([0, 0, 0, 0.5])).toThrow(/positive/);
 	});
 
-	await test('rejects a region that extends past the image', () => {
+	test('rejects a region that extends past the image', () => {
 		expect(() => serializeRegionOfInterest({
 			x: 0.6,
 			y: 0,
@@ -41,7 +41,7 @@ await describe('serializeRegionOfInterest', async () => {
 		})).toThrow(/past the image/);
 	});
 
-	await test('rejects a tuple of the wrong length', () => {
+	test('rejects a tuple of the wrong length', () => {
 		expect(() => serializeRegionOfInterest([0, 0, 1] as never)).toThrow(/four values/);
 	});
 });

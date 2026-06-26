@@ -57,8 +57,8 @@ const expectNoLingeringShim = async (marker: string): Promise<void> => {
 	expect(leftover).toBe('');
 };
 
-await describe('wrapper (shim binary)', async () => {
-	await test('buildArgs never emits --password', () => {
+describe('wrapper (shim binary)', () => {
+	test('buildArgs never emits --password', () => {
 		const args = buildArgs({
 			password: 'hunter2',
 			fast: true,
@@ -67,7 +67,7 @@ await describe('wrapper (shim binary)', async () => {
 		expect(args).not.toContain('hunter2');
 	});
 
-	await test('password reaches the CLI via env, not argv', async () => {
+	test('password reaches the CLI via env, not argv', async () => {
 		// The shim reports its env + argv back through the result text.
 		await using wrapper = await importWrapper(shShim(
 			String.raw`printf '{"page":1,"pageCount":1,"width":1,"height":1,"text":"pw=%s argv=%s","observations":[]}\n' "$MAC_OCR_PDF_PASSWORD" "$*"`,
@@ -77,31 +77,31 @@ await describe('wrapper (shim binary)', async () => {
 		expect(result.text).not.toContain('--password');
 	});
 
-	await test('createSearchablePdf forwards imageQuality', async () => {
+	test('createSearchablePdf forwards imageQuality', async () => {
 		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
 		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { imageQuality: 0.75 });
 		expect(Buffer.from(pdf).toString()).toContain('--image-quality 0.75');
 	});
 
-	await test('createSearchablePdf forwards imagePageDpi', async () => {
+	test('createSearchablePdf forwards imagePageDpi', async () => {
 		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
 		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { imagePageDpi: 300 });
 		expect(Buffer.from(pdf).toString()).toContain('--image-page-dpi 300');
 	});
 
-	await test('createSearchablePdf forwards imageDownsampleDpi', async () => {
+	test('createSearchablePdf forwards imageDownsampleDpi', async () => {
 		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
 		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { imageDownsampleDpi: 200 });
 		expect(Buffer.from(pdf).toString()).toContain('--image-downsample-dpi 200');
 	});
 
-	await test('createSearchablePdf forwards ocrStrategy', async () => {
+	test('createSearchablePdf forwards ocrStrategy', async () => {
 		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
 		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { ocrStrategy: 'standard' });
 		expect(Buffer.from(pdf).toString()).toContain('--ocr-strategy standard');
 	});
 
-	await test('ocr() fails multi-page input from the first page, without waiting', async () => {
+	test('ocr() fails multi-page input from the first page, without waiting', async () => {
 		// Page 1 announces pageCount 3; the shim then stalls. The wrapper must
 		// reject from pageCount alone instead of waiting for page 2. (`exec`
 		// replaces the shell so the wrapper's kill signal reaches the sleeper
@@ -118,7 +118,7 @@ await describe('wrapper (shim binary)', async () => {
 		expect(Date.now() - start).toBeLessThan(4000);
 	});
 
-	await test('ocr.pages() errors when pages are lost to unparseable lines', async () => {
+	test('ocr.pages() errors when pages are lost to unparseable lines', async () => {
 		await using wrapper = await importWrapper(shShim([
 			String.raw`printf '%s\n' '${jsonlLine(1, 3, 'one')}'`,
 			String.raw`printf 'GARBAGE\n'`,
@@ -139,7 +139,7 @@ await describe('wrapper (shim binary)', async () => {
 		expect(seen).toEqual([1, 2]);
 	});
 
-	await test('ocr.pages() errors on a clean exit with no output', async () => {
+	test('ocr.pages() errors on a clean exit with no output', async () => {
 		await using wrapper = await importWrapper(shShim('exit 0'));
 		let error: unknown;
 		try {
@@ -153,7 +153,7 @@ await describe('wrapper (shim binary)', async () => {
 		expect((error as MacOcrError).message).toMatch(/produced no output/);
 	});
 
-	await test('an externally killed binary is a runtime error, not an abort', async () => {
+	test('an externally killed binary is a runtime error, not an abort', async () => {
 		await using wrapper = await importWrapper(shShim('kill -KILL $$'));
 		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
@@ -161,7 +161,7 @@ await describe('wrapper (shim binary)', async () => {
 		expect((error as MacOcrError).message).toContain('SIGKILL');
 	});
 
-	await test('aborting ocr.pages() kills the subprocess — no zombie', async () => {
+	test('aborting ocr.pages() kills the subprocess — no zombie', async () => {
 		await using wrapper = await importWrapper(stallingShim);
 		const controller = new AbortController();
 		const seen: number[] = [];
@@ -180,7 +180,7 @@ await describe('wrapper (shim binary)', async () => {
 		await expectNoLingeringShim(wrapper.binaryPath);
 	});
 
-	await test('breaking out of ocr.pages() kills the subprocess — no zombie', async () => {
+	test('breaking out of ocr.pages() kills the subprocess — no zombie', async () => {
 		await using wrapper = await importWrapper(stallingShim);
 		let seen = 0;
 		// eslint-disable-next-line no-unreachable-loop -- break-early is the scenario under test
