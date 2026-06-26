@@ -92,7 +92,11 @@ Pass `--merge` to combine multiple file/URL inputs into one searchable PDF. Merg
 
 Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 
-Set `MAC_OCR_DEBUG=1` when creating searchable PDFs to draw visible OCR bounding boxes into the PDF and write a JSONL sidecar next to each output PDF. For example, `lease.pdf` gets `lease.jsonl`. The sidecar contains one record per output page in page order, including recognized text, line boxes, word boxes, confidence, OCR image size, and PDF media box. Debug mode requires file output; it is not available with `-o -`.
+### Partitioned OCR
+
+Searchable PDFs use `--ocr-strategy auto` by default. Vision can miss small labels when it analyzes a full high-resolution page at once, even though the same text is readable in a tighter crop. Auto mode starts with full-page OCR, then runs a partitioned pass only for large pages with small or missing text: it recursively splits regions along their longer axis until text is large enough or the region is below the calibrated size floor.
+
+In dogfooding on a high-resolution five-page scan, partitioned OCR recovered small form labels the full-page pass missed while keeping the generated PDF around 7 MB. Large partitioned runs may take longer because Vision processes regions serially. Use `--ocr-strategy standard` to opt out, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
@@ -129,6 +133,7 @@ Both OCR and `searchable-pdf` accept the recognition options:
 |------|--------|
 | `-o, --output <dest>` | Output path, `[name]` template, directory, or `-` for stdout. Default: `[name].ocr.pdf` next to each input. |
 | `--ocr-all-pages` | OCR every page, including pages that already have selectable text (skipped by default) |
+| `--ocr-strategy <auto\|standard\|partitioned>` | Searchable PDF OCR strategy. `auto` may run a partitioned second pass for large pages with small text; `standard` uses full-page OCR only. |
 | `--merge` | Combine inputs into one searchable PDF in argument order. Requires `-o <file.pdf>` or `-o -`. |
 | `--image-quality <0–1>` | Visible image layer quality for image inputs. OCR still uses the original full-resolution image; PDF inputs are not recompressed. |
 | `--image-page-dpi <36–2400>` | DPI to use for image input page sizing. OCR still uses the original full-resolution image; PDF inputs are unaffected. |

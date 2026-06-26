@@ -47,6 +47,10 @@ public struct OCROptions: Sendable {
 	}
 }
 
+public enum OCRStrategy: String, CaseIterable, Sendable {
+	case auto, standard, partitioned
+}
+
 public struct OCRResult: ResultPayload {
 	public let text: String
 	public let observations: [Observation]
@@ -83,6 +87,20 @@ public struct WordBox: Sendable {
 	}
 }
 
+public struct ObservationSource: Sendable {
+	public let pass: String
+	public let partition: BoundingBox?
+	public let edgeTouching: Bool
+	public let depth: Int?
+
+	public init(pass: String, partition: BoundingBox? = nil, edgeTouching: Bool = false, depth: Int? = nil) {
+		self.pass = pass
+		self.partition = partition
+		self.edgeTouching = edgeTouching
+		self.depth = depth
+	}
+}
+
 public struct Observation: Encodable, Sendable {
 	public let text: String
 	public let confidence: Float
@@ -97,6 +115,8 @@ public struct Observation: Encodable, Sendable {
 	/// Per-word geometry for the top candidate. Deliberately excluded from
 	/// the encoded schema; empty when Vision couldn't provide ranges.
 	public let words: [WordBox]
+	/// Internal/debug origin. Deliberately excluded from the normal JSON schema.
+	public let source: ObservationSource?
 
 	private enum CodingKeys: String, CodingKey {
 		case text, confidence, requestRevision, boundingBox, candidates
@@ -119,7 +139,8 @@ public struct Observation: Encodable, Sendable {
 		requestRevision: Int,
 		boundingBox: BoundingBox,
 		candidates: [TextCandidate],
-		words: [WordBox] = []
+		words: [WordBox] = [],
+		source: ObservationSource? = nil
 	) {
 		self.text = text
 		self.confidence = confidence
@@ -127,6 +148,7 @@ public struct Observation: Encodable, Sendable {
 		self.boundingBox = boundingBox
 		self.candidates = candidates
 		self.words = words
+		self.source = source
 	}
 }
 
