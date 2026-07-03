@@ -8,7 +8,17 @@ import MacOcrCore
 public struct LanguagesCommand: ParsableCommand {
 	public static let configuration = CommandConfiguration(
 		commandName: "languages",
-		abstract: "List the recognition languages supported on this macOS version."
+		abstract: "List the recognition languages supported on this macOS version.",
+		discussion: """
+			Prints one BCP-47 language code per line. Pass the codes to `ocr` or \
+			`searchable-pdf` via -l/--language.
+
+			# Languages for the default (accurate) recognizer
+			mac-ocr languages
+
+			# Languages available to --fast
+			mac-ocr languages --fast
+			"""
 	)
 
 	public init() {}

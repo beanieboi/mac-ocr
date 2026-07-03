@@ -14,16 +14,30 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		commandName: "searchable-pdf",
 		abstract: "Create a PDF with an invisible, selectable OCR text layer.",
 		discussion: """
-			Writes searchable PDFs that look identical to the source but whose text is \
-			selectable and searchable. By default, each input is written to its own \
-			PDF. Pass --merge to combine inputs into one PDF in argument order.
+			Writes a PDF that looks identical to the source but whose text is \
+			selectable and searchable. Works on PDFs and images.
 
-			  mac-ocr searchable-pdf scan.pdf                 # writes scan.ocr.pdf
-			  mac-ocr searchable-pdf *.pdf                     # writes <name>.ocr.pdf for each
-			  mac-ocr searchable-pdf scan.pdf -o out/          # writes out/scan.ocr.pdf
-			  mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'
-			  mac-ocr searchable-pdf scan.pdf -o -             # PDF to stdout
-			  mac-ocr searchable-pdf --merge -o doc.pdf page1.jpg page2.jpg
+			# Add a text layer to a scan (writes scan.ocr.pdf beside it)
+			mac-ocr searchable-pdf scan.pdf
+
+			# Process many PDFs (each writes <name>.ocr.pdf)
+			mac-ocr searchable-pdf *.pdf
+
+			# Turn an image into a one-page searchable PDF
+			mac-ocr searchable-pdf photo.jpg
+
+			# Write to a directory or a [name] template
+			mac-ocr searchable-pdf scan.pdf -o out/
+			mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'
+
+			# Pipe in from stdin and out to stdout
+			cat scan.pdf | mac-ocr searchable-pdf - -o - > scan.ocr.pdf
+
+			# Combine several inputs into one PDF (in argument order)
+			mac-ocr searchable-pdf --merge -o doc.pdf page1.jpg page2.jpg
+
+			# OCR every page, including ones that already have text
+			mac-ocr searchable-pdf scan.pdf --ocr-all-pages
 
 			By default each input is written next to it as [name].ocr.pdf. A single \
 			fixed path or - (stdout) takes only one input unless --merge is passed; \

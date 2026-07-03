@@ -8,15 +8,36 @@ public struct MacOcr: AsyncParsableCommand {
 		commandName: "mac-ocr",
 		abstract: "Recognize text in images and PDFs using Apple Vision.",
 		discussion: """
-			Pass one or more images or PDFs to recognize text. OCR is the default \
-			action, so no subcommand is required:
+			OCR is the default action, so no subcommand is needed.
 
-			  mac-ocr receipt.jpg
-			  mac-ocr page1.png page2.png --format jsonl
-			  mac-ocr scan.pdf --format jsonl
+			# Read text from an image
+			mac-ocr receipt.jpg
 
-			Use the `searchable-pdf` subcommand to render a PDF with an invisible, \
-			selectable text layer over the original pages.
+			# OCR several files at once (images and/or PDFs)
+			mac-ocr *.png invoice.pdf
+
+			# Read from stdin: a screenshot, scan, or download
+			cat screenshot.png | mac-ocr
+			curl -sL https://example.com/sign.png | mac-ocr
+
+			# Copy the recognized text to the clipboard
+			mac-ocr receipt.jpg | pbcopy
+
+			# Stream a large PDF page by page (JSON Lines)
+			mac-ocr book.pdf --format jsonl
+
+			# Bounding boxes and confidence as JSON, queried with jq
+			mac-ocr receipt.jpg --format json | jq '.[0].observations[].text'
+
+			# Save each file's text alongside it as .txt
+			mac-ocr ~/Screenshots/*.png -o '[dir]/[name].txt'
+
+			# Recognize specific languages (repeatable, BCP-47)
+			mac-ocr menu.jpg -l ja-JP -l en-US
+
+			Other actions: `searchable-pdf` adds a selectable text layer to a PDF or \
+			image; `languages` lists supported recognition languages. Run \
+			`mac-ocr <subcommand> --help` for details.
 			""",
 		version: macOcrVersion,
 		subcommands: [

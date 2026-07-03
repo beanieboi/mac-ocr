@@ -5,7 +5,23 @@ import MacOcrCore
 public struct OCRCommand: AsyncParsableCommand {
 	public static let configuration = CommandConfiguration(
 		commandName: "ocr",
-		abstract: "Recognize text in images or PDFs using Apple Vision."
+		abstract: "Recognize text in images or PDFs using Apple Vision.",
+		discussion: """
+			The default action: `mac-ocr <files>` runs OCR without naming `ocr`. \
+			Run `mac-ocr --help` for the full set of examples (stdin, clipboard, jq).
+
+			# Plain text to stdout (the default)
+			mac-ocr receipt.jpg
+
+			# JSON with per-word bounding boxes and confidence
+			mac-ocr receipt.jpg --format json
+
+			# Stream a multi-page PDF one JSON object per page
+			mac-ocr scan.pdf --format jsonl
+
+			# Restrict recognition to a region (x,y,w,h; top half here)
+			mac-ocr poster.jpg --roi 0,0,1,0.5
+			"""
 	)
 
 	public init() {}
