@@ -124,7 +124,7 @@ mac-ocr languages --fast    # fast recognizer's set
 
 ## Node.js API
 
-The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) that spawns the binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
+The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
 
 ```ts
 const { text, observations } = await ocr(bytes)          // single image or single-page PDF
@@ -135,6 +135,7 @@ const langs = await supportedLanguages()                  // → string[] (ocr +
 ```
 
 - `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
+- Main-thread `ocr()` calls run one at a time. Avoid an unbounded `Promise.all()` burst, and keep input bytes unchanged until each call settles.
 - Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 

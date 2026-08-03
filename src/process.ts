@@ -1,4 +1,5 @@
 import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { MacOcrError, type MacOcrErrorEnvelope, type MacOcrErrorKind } from './errors.ts';
 import type { Input } from './types.ts';
@@ -8,9 +9,9 @@ import type { Input } from './types.ts';
  * `pnpm test:node` copies a debug build to `bin/mac-ocr` (gitignored;
  * `prepack` always rebuilds the universal release binary before publish).
  */
-const binaryPath = fileURLToPath(new URL('../bin/mac-ocr', import.meta.url));
+export const binaryPath = fileURLToPath(new URL('../bin/mac-ocr', import.meta.url));
 
-const toBuffer = (input: Input): Buffer => {
+export const toBuffer = (input: Input): Buffer => {
 	if (Buffer.isBuffer(input)) {
 		return input;
 	}
@@ -82,13 +83,10 @@ export const spawnBinary = (
 	proc.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 	proc.stdio[3]?.on('data', (chunk: Buffer) => machineErrorChunks.push(chunk));
 
-	const exit = new Promise<ExitStatus>((resolve, reject) => {
-		proc.once('error', reject);
-		proc.once('close', (code, signalName) => resolve({
-			code,
-			signal: signalName,
-		}));
-	});
+	const exit = once(proc, 'close').then(([code, signalName]) => ({
+		code: code as number | null,
+		signal: signalName as NodeJS.Signals | null,
+	}));
 	exit.catch(() => {});
 
 	// A child that exits before reading all of stdin makes the write end EPIPE;

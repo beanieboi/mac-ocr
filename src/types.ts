@@ -1,4 +1,4 @@
-/** Image or PDF bytes. Read files or fetch URLs in your own code and pass the bytes. */
+/** Image or PDF bytes. Keep them unchanged until the consuming operation finishes. */
 export type Input = Buffer | Uint8Array | ArrayBuffer;
 
 /** Normalized 0–1 rectangle, top-left origin. */
@@ -59,7 +59,7 @@ export type OcrResult = {
 /**
  * Region of interest in normalized top-left-origin coordinates. Accepts an
  * object `{ x, y, width, height }`, a tuple `[x, y, width, height]`, or a
- * `"x,y,width,height"` string. Structured forms are validated before spawn.
+ * `"x,y,width,height"` string. Structured forms are validated by Node before OCR begins.
  */
 export type RegionOfInterest =
 	| BoundingBox
@@ -96,7 +96,7 @@ export type CommonOptions = {
 	/** Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). */
 	password?: string;
 
-	/** Abort the underlying subprocess. */
+	/** Abort this operation. */
 	signal?: AbortSignal;
 };
 

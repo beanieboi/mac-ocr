@@ -1,6 +1,6 @@
 # Node.js API
 
-`mac-ocr` ships a typed, promise-based API that spawns the bundled CLI binary (no native addon). macOS only; ESM only (Node ≥ 22).
+`mac-ocr` ships a typed, promise-based API backed by the bundled native binary (no native addon). macOS only; ESM only (Node ≥ 22).
 
 ```sh
 npm install mac-ocr
@@ -12,7 +12,7 @@ import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 
 ## Input
 
-Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; the API does no file/URL I/O itself. A non-bytes input throws a `TypeError`.
+Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; paths and URLs are not accepted as API inputs. Keep the bytes unchanged until the returned Promise settles or async iteration finishes. A non-bytes input throws a `TypeError`.
 
 ```ts
 import fs from 'node:fs/promises'
@@ -79,8 +79,8 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | `minTextHeight` | `number` | Ignore text shorter than this fraction of image height (`0`–`1`) |
 | `regionOfInterest` | object \| tuple \| string | Restrict recognition to a sub-rectangle (see below) |
 | `pdfDpi` | `number \| 'auto'` | PDF rasterization DPI (`'auto'` default, or `72`–`600`) |
-| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Forwarded to the CLI via the env var, never `argv`, so it stays out of the process list |
-| `signal` | `AbortSignal` | Abort the underlying subprocess |
+| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Never included in process arguments (`argv`) |
+| `signal` | `AbortSignal` | Abort this operation |
 
 `ocr` and `ocr.pages` additionally accept:
 
@@ -110,7 +110,7 @@ Normalized, top-left origin. Three accepted forms:
 '0,0,1,0.5'                             // string
 ```
 
-Object/tuple forms are validated before the subprocess spawns (throws `RangeError`/`TypeError` on out-of-range or malformed values).
+Object and tuple forms are validated by Node before OCR begins. Invalid values throw `RangeError` or `TypeError`.
 
 ## Result types
 
@@ -149,7 +149,7 @@ try {
 } catch (error) {
   if (error instanceof MacOcrError) {
     error.kind      // category — see below
-    error.code      // machine-readable code from the CLI, when available
+    error.code      // machine-readable error code, when available
     error.exitCode  // process exit code, or null (signal/never-started)
     error.stderr    // captured CLI stderr
   }
@@ -160,7 +160,7 @@ try {
 |---|---|
 | `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` (detected by the wrapper — `exitCode` is `null`) |
 | `unavailable` | A feature isn't available on this macOS version |
-| `runtime` | Recognition or I/O failure, or the binary was killed by a signal that wasn't your `AbortSignal` |
+| `runtime` | Recognition or I/O failure, queue capacity exceeded (`code: 'queue_capacity_exceeded'`), or the binary was killed by a signal that wasn't your `AbortSignal` |
 | `internal` | An unexpected CLI failure |
 | `abort` | Cancelled via your `AbortSignal` — never anything else |
 | `spawn` | The binary couldn't be started |
@@ -173,6 +173,22 @@ const controller = new AbortController()
 setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
+
+Queued `ocr()` calls stop waiting immediately when aborted. An active call can take up to five seconds to stop. Aborted calls reject with `MacOcrError` kind `abort`.
+
+## Concurrency
+
+`ocr()` calls run one at a time. A large `Promise.all()` burst does not improve OCR throughput; prefer a serial loop or an application-level concurrency limit.
+
+The waiting queue accepts up to 512 calls and a conservative 64 MiB memory budget. Additional calls reject with `MacOcrError` code `queue_capacity_exceeded`. One larger input is accepted when no other call is waiting.
+
+## Runtime behavior
+
+Main-thread `ocr()` calls in one Node process share an internal native service. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
+
+Worker-thread calls, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
+
+API passwords never enter `argv`: shared `ocr()` calls send them through its internal request stream, while one-shot APIs use `MAC_OCR_PDF_PASSWORD`. Only the active input is written to a private temporary file and it is removed when the operation finishes.
 
 ## Tree-shaking
 
