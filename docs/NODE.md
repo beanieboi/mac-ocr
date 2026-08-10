@@ -7,7 +7,7 @@ npm install mac-ocr
 ```
 
 ```ts
-import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
+import { ocr, ocrDocument, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 ```
 
 ## Input
@@ -44,6 +44,28 @@ const pages = await Array.fromAsync(ocr.pages(pdfBytes))   // OcrResult[]
 ```
 
 Works on single-page inputs too (yields one result). The subprocess only spawns when iteration starts, and each returned value can be consumed once — call `ocr.pages()` again to re-read. If the CLI exits cleanly but any announced page failed to arrive (an unparseable line), the iteration throws a `parse`-kind error rather than silently dropping pages.
+
+## `ocrDocument(input, options?)`
+
+Recognizes structured document content in a single image or single-page PDF. Requires macOS 26 or later and returns `Promise<OcrDocumentResult>`.
+
+```ts
+const result = await ocrDocument(bytes, { languages: ['en'] })
+console.log(result.text)
+console.log(result.documents[0]?.content.tables)
+```
+
+Throws `kind: 'usage'` for a multi-page PDF. On older macOS versions it throws `kind: 'unavailable'` with `code: 'document_recognition_unavailable'`.
+
+## `ocrDocument.pages(input, options?)`
+
+Recognizes each PDF page as structured document content. It has the same lazy, single-use streaming behavior as `ocr.pages`.
+
+```ts
+for await (const page of ocrDocument.pages(pdfBytes)) {
+  console.log(page.page, page.documents[0]?.content.paragraphs)
+}
+```
 
 ## `createSearchablePdf(input, options?)`
 
@@ -87,6 +109,22 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | Option | Type | Effect |
 |---|---|---|
 | `maxCandidates` | `number` | Alternative text candidates per observation (`1`–`10`, default `1`) |
+
+`ocrDocument` and `ocrDocument.pages` accept:
+
+| Option | Type | Effect |
+|---|---|---|
+| `languages` | `string[]` | Document-recognition language identifiers, such as `['en']`. Ordinary OCR identifiers such as `en-US` are not accepted. |
+| `customWords` | `string[]` | Custom vocabulary to bias document recognition toward |
+| `languageCorrection` | `boolean` | Language correction (default `true`) |
+| `minTextHeight` | `number` | Ignore text shorter than this fraction of image height (`0`–`1`) |
+| `maxCandidates` | `number` | Alternative text candidates per recognized line (`1`–`10`, default `1`) |
+| `regionOfInterest` | object \| tuple \| string | Restrict recognition to a sub-rectangle (see below) |
+| `pdfDpi` | `number \| 'auto'` | PDF rasterization DPI (`'auto'` default, or `72`–`600`) |
+| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`) |
+| `signal` | `AbortSignal` | Abort this operation |
+
+`ocrDocument` does not accept `fast` or `confidence`. The document recognizer has no fast/accurate mode, and filtering individual lines would make its root transcript and structural containers inconsistent.
 
 `createSearchablePdf` additionally accepts:
 
@@ -137,6 +175,24 @@ type BoundingBox = { x: number; y: number; width: number; height: number }
 
 Bounding boxes are normalized `0`–`1`, top-left origin. Convert to pixels by multiplying by the result's `width`/`height` — see [Coordinates](./CLI.md#coordinates).
 
+### Structured document result
+
+```ts
+type OcrDocumentResult = {
+  schema: 'mac-ocr.document'
+  schemaVersion: 1
+  requestRevision: number
+  page: number
+  pageCount: number
+  width: number
+  height: number
+  text: string
+  documents: RecognizedDocument[]
+}
+```
+
+The package exports the nested `RecognizedDocument`, `DocumentContainer`, `DocumentText`, `DocumentTable`, `DocumentTableCell`, `DocumentList`, `DocumentListItem`, `DocumentRegion`, and `DocumentIndexRange` types. Document containers are recursive because table cells and list items can contain their own paragraphs, tables, lists, and text. Root `text` is the non-duplicated convenience transcript; structural views are not meant to be concatenated.
+
 ## Errors
 
 Failures throw a `MacOcrError`:
@@ -158,13 +214,13 @@ try {
 
 | `kind` | When |
 |---|---|
-| `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` (detected by the wrapper — `exitCode` is `null`) |
+| `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` or `ocrDocument()` (detected by the wrapper — `exitCode` is `null`) |
 | `unavailable` | A feature isn't available on this macOS version |
 | `runtime` | Recognition or I/O failure, queue capacity exceeded (`code: 'queue_capacity_exceeded'`), or the binary was killed by a signal that wasn't your `AbortSignal` |
 | `internal` | An unexpected CLI failure |
 | `abort` | Cancelled via your `AbortSignal` — never anything else |
 | `spawn` | The binary couldn't be started |
-| `parse` | The binary's output couldn't be parsed, or pages were missing — `ocr.pages()` verifies every page announced by `pageCount` actually arrived |
+| `parse` | The binary's output couldn't be parsed, or pages were missing — `ocr.pages()` and `ocrDocument.pages()` verify every page announced by `pageCount` actually arrived |
 
 ## Cancellation
 
@@ -184,7 +240,7 @@ The waiting queue accepts up to 512 calls and a conservative 64 MiB memory budge
 
 ## Runtime behavior
 
-Main-thread `ocr()`, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` calls in one Node process share an internal native service and run FIFO. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
+Main-thread `ocr()`, `ocr.pages()`, `ocrDocument()`, `ocrDocument.pages()`, `createSearchablePdf()`, and `supportedLanguages()` calls in one Node process share an internal native service and run FIFO. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
 
 Worker-thread calls run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
 

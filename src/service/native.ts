@@ -1,9 +1,9 @@
 import childProcess from 'node:child_process';
 import { addAbortListener } from 'node:events';
 import fs from 'node:fs/promises';
+import { parseOcrDocumentResult } from '../document-parser.ts';
 import { MacOcrError } from '../errors.ts';
 import { binaryPath } from '../process.ts';
-import type { OcrResult } from '../types.ts';
 import {
 	createFrameDecoder,
 	encodeFrame,
@@ -20,7 +20,7 @@ import {
 	serviceSpawnFailure,
 } from './failures.ts';
 
-export type NativeOperation = 'ocr' | 'ocr-pages' | 'searchable-pdf' | 'languages';
+export type NativeOperation = 'ocr' | 'ocr-pages' | 'document' | 'document-pages' | 'searchable-pdf' | 'languages';
 
 export type NativeRequest = {
 	operation: NativeOperation;
@@ -30,7 +30,7 @@ export type NativeRequest = {
 	outputName?: string;
 };
 
-export type NativeStream = AsyncIterable<OcrResult> & {
+export type NativeStream = AsyncIterable<unknown> & {
 	cancel: () => Promise<void>;
 	done: Promise<void>;
 };
@@ -52,7 +52,7 @@ type PendingUnary = PendingBase & {
 type PendingStream = PendingBase & {
 	type: 'stream';
 	nextSequence: number;
-	next?: PromiseWithResolvers<IteratorResult<OcrResult>>;
+	next?: PromiseWithResolvers<IteratorResult<unknown>>;
 	completed: boolean;
 	error?: unknown;
 	resolveDone: () => void;
@@ -66,7 +66,10 @@ export type NativeService = {
 	inputDirectory: string;
 	pendingRequests: () => number;
 	request: (request: NativeRequest, signal?: AbortSignal) => Promise<unknown>;
-	stream: (request: NativeRequest, signal?: AbortSignal) => NativeStream;
+	stream: (
+		request: NativeRequest,
+		signal?: AbortSignal,
+	) => NativeStream;
 	stop: (preserveQueuedRequests?: boolean) => void;
 };
 
@@ -101,14 +104,26 @@ const responseError = (response: Extract<NativeResponse, { type: 'error' }>): Ma
 	},
 );
 
-const isResultForOperation = (operation: NativeOperation, result: unknown): boolean => {
+const parseResultForOperation = (
+	operation: NativeOperation,
+	result: unknown,
+): unknown | undefined => {
 	if (operation === 'ocr') {
-		return isOcrResult(result);
+		return isOcrResult(result) ? result : undefined;
 	}
 	if (operation === 'searchable-pdf') {
-		return isNativeArtifact(result);
+		return isNativeArtifact(result) ? result : undefined;
 	}
-	return operation === 'languages' && isLanguageList(result);
+	if (operation === 'document') {
+		return parseOcrDocumentResult(result);
+	}
+	if (operation === 'languages') {
+		return isLanguageList(result) ? result : undefined;
+	}
+	if (operation === 'ocr-pages') {
+		return isOcrResult(result) ? result : undefined;
+	}
+	return operation === 'document-pages' ? parseOcrDocumentResult(result) : undefined;
 };
 
 const startNativeService = (
@@ -344,10 +359,11 @@ const startNativeService = (
 			if (request.type === 'stream' && request.cancelled) {
 				return true;
 			}
+			const result = parseResultForOperation(request.operation, response.result);
 			if (
 				request.type !== 'stream'
 				|| response.sequence !== request.nextSequence
-				|| !isOcrResult(response.result)
+				|| result === undefined
 				|| !request.next
 			) {
 				failProtocol(`mac-ocr service returned an invalid stream item for request ${response.id}`);
@@ -358,7 +374,7 @@ const startNativeService = (
 			request.next = undefined;
 			next.resolve({
 				done: false,
-				value: response.result,
+				value: result,
 			});
 			return true;
 		}
@@ -370,11 +386,12 @@ const startNativeService = (
 			settleStream(request);
 			return true;
 		}
-		if (!isResultForOperation(request.operation, response.result)) {
+		const result = parseResultForOperation(request.operation, response.result);
+		if (result === undefined) {
 			failProtocol(`mac-ocr service returned an invalid result for request ${response.id}`);
 			return false;
 		}
-		settleUnary(request, undefined, response.result);
+		settleUnary(request, undefined, result);
 		return true;
 	};
 	const handleFrame = (frame: Buffer): boolean => {
@@ -466,7 +483,7 @@ const startNativeService = (
 			});
 			return promise;
 		},
-		stream: (request, signal) => {
+		stream: (request: NativeRequest, signal?: AbortSignal): NativeStream => {
 			const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
 			const stream: PendingStream = {
 				id: requestId(),
@@ -485,7 +502,7 @@ const startNativeService = (
 			} else {
 				submit(request, signal, stream);
 			}
-			const next = (): Promise<IteratorResult<OcrResult>> => {
+			const next = (): Promise<IteratorResult<unknown>> => {
 				if (stream.completed) {
 					return stream.error === undefined
 						? Promise.resolve({
@@ -497,7 +514,7 @@ const startNativeService = (
 				if (stream.next) {
 					return Promise.reject(new MacOcrError('mac-ocr stream already has a pending next() call', { kind: 'internal' }));
 				}
-				stream.next = Promise.withResolvers<IteratorResult<OcrResult>>();
+				stream.next = Promise.withResolvers<IteratorResult<unknown>>();
 				write({
 					id: stream.id,
 					command: 'pull',
@@ -506,7 +523,6 @@ const startNativeService = (
 			};
 			return {
 				[Symbol.asyncIterator]: () => ({ next }),
-				next,
 				cancel: async () => {
 					cancelPending(stream);
 					await stream.done;
