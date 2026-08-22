@@ -236,12 +236,14 @@ const queueRequest = (
 		return Promise.reject(serviceAbortFailure());
 	}
 	const buffer = input === undefined ? undefined : toBuffer(input);
-	const retainedInputBytes = buffer?.buffer.byteLength ?? 0;
+	// A Buffer view keeps its entire backing ArrayBuffer alive until staging.
+	// Count that retained allocation, not only the bytes written to disk.
+	const retainedInputBackingBytes = buffer?.buffer.byteLength ?? 0;
 	const retainedMetadataBytes = estimateRetainedMetadataBytes(arguments_, password);
-	const retainedBytes = retainedInputBytes + retainedMetadataBytes;
+	const retainedBytes = retainedInputBackingBytes + retainedMetadataBytes;
 	const allowsOversizedInput = (
 		unstagedRequestCount === 0
-		&& retainedInputBytes > maxUnstagedRequestBytes
+		&& retainedInputBackingBytes > maxUnstagedRequestBytes
 		&& retainedMetadataBytes <= maxUnstagedRequestBytes
 	);
 	if (
