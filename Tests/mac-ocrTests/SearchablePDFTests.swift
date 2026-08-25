@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import ImageIO
 import PDFKit
@@ -114,6 +115,15 @@ import UniformTypeIdentifiers
 		let document = try #require(PDFDocument(data: data))
 		#expect(text(document).contains(phrase))
 		#expect(!text(document).contains("quickbrown"))
+	}
+
+	@Test func invisibleTextLineFitsDetectedWidth() {
+		let phrase = "A long recognized line with explicit spaces must remain inside its box"
+		let maximumWidth: CGFloat = 180
+		let line = SearchablePDF.makeInvisibleTextLine(phrase, height: 28, maximumWidth: maximumWidth)
+		let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+
+		#expect(width <= maximumWidth + 0.01)
 	}
 
 	@Test func emptyImageProducesPageWithoutText() async throws {

@@ -2167,12 +2167,9 @@ public enum SearchablePDF {
 		let originX = mediaBox.minX + CGFloat(box.x) * mediaBox.width
 		let originY = mediaBox.minY + CGFloat(1 - box.y - box.height) * mediaBox.height
 
-		let font = makeFont(size: boxHeight)
-		let attributes: [NSAttributedString.Key: Any] = [
-			NSAttributedString.Key(kCTFontAttributeName as String): font
-		]
-		let attributed = NSAttributedString(string: text, attributes: attributes)
-		let line = CTLineCreateWithAttributedString(attributed)
+		let boxWidth = CGFloat(box.width) * mediaBox.width
+		guard boxWidth > 0 else { return }
+		let line = makeInvisibleTextLine(text, height: boxHeight, maximumWidth: boxWidth)
 
 		var ascent: CGFloat = 0
 		var descent: CGFloat = 0
@@ -2186,6 +2183,36 @@ public enum SearchablePDF {
 		context.textMatrix = .identity
 		context.textPosition = CGPoint(x: originX, y: originY + descent)
 		CTLineDraw(line, context)
+	}
+
+	/// Lay out an OCR line without allowing its selectable glyphs to extend
+	/// beyond Vision's bounding box. The system font used for the invisible
+	/// layer can be substantially wider than the typeface in a scan. Shrinking
+	/// the font uniformly preserves explicit word separators while keeping the
+	/// run inside the detected line; a horizontal text matrix is deliberately
+	/// avoided because PDF extractors can interpret it as inter-letter spacing.
+	static func makeInvisibleTextLine(_ text: String, height: CGFloat, maximumWidth: CGFloat) -> CTLine {
+		func line(fontSize: CGFloat) -> CTLine {
+			let attributes: [NSAttributedString.Key: Any] = [
+				NSAttributedString.Key(kCTFontAttributeName as String): makeFont(size: fontSize)
+			]
+			return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
+		}
+
+		var fontSize = height
+		var fittedLine = line(fontSize: fontSize)
+		guard maximumWidth > 0 else { return fittedLine }
+
+		// Core Text font substitution and size quantization are not guaranteed to
+		// scale a line perfectly in one step. Re-measure after each adjustment;
+		// two corrections are normally enough, with one final pass for safety.
+		for _ in 0..<3 {
+			let width = CGFloat(CTLineGetTypographicBounds(fittedLine, nil, nil, nil))
+			guard width > maximumWidth, width > 0 else { return fittedLine }
+			fontSize *= maximumWidth / width
+			fittedLine = line(fontSize: fontSize)
+		}
+		return fittedLine
 	}
 
 	/// System UI font for the given size. Core Text performs font substitution
