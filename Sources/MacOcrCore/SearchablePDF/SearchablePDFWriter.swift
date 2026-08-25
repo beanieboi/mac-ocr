@@ -2087,30 +2087,20 @@ public enum SearchablePDF {
 		drawVisible(context)
 		context.restoreGState()
 
-		// Invisible, selectable text layer. One run per recognized *word*,
-		// positioned from Vision's per-word geometry, so selection rectangles
-		// track the printed words; observations without word geometry fall
-		// back to a single line-level run.
+		// Invisible, selectable text layer. Keep each Vision observation in one
+		// text run so the whitespace recognized by Vision is encoded explicitly
+		// in the PDF. Drawing independently positioned word runs loses the
+		// separators: PDF extractors then have to infer them from geometry and
+		// commonly fuse tightly spaced words in scanned body text.
 		context.saveGState()
 		context.setTextDrawingMode(.invisible)
 		for observation in ocr.observations {
-			if observation.words.isEmpty {
-				drawInvisibleText(
-					observation.text,
-					normalizedBox: observation.boundingBox,
-					mediaBox: mediaBox,
-					into: context
-				)
-			} else {
-				for word in observation.words {
-					drawInvisibleText(
-						word.text,
-						normalizedBox: word.boundingBox,
-						mediaBox: mediaBox,
-						into: context
-					)
-				}
-			}
+			drawInvisibleText(
+				observation.text,
+				normalizedBox: observation.boundingBox,
+				mediaBox: mediaBox,
+				into: context
+			)
 		}
 		context.restoreGState()
 
@@ -2189,15 +2179,10 @@ public enum SearchablePDF {
 		var leading: CGFloat = 0
 		_ = CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
 
-		// Draw at natural metrics (font size ≈ box height) with an identity
-		// text matrix. Fitting a word to its box width would need a horizontal
-		// scale, but under a non-unit text matrix Core Text serializes
-		// per-glyph positioning that PDF text extractors read as inter-letter
-		// spaces ("Hello" → "H e l l o"), breaking search. The breakage grows
-		// with the scale factor: clean when the box ≈ the rendered text, but
-		// splitting once the box is materially wider (common on sparse OCR
-		// lines). So alignment instead comes from one run per word at that
-		// word's own box (see writePage); within a run, width stays approximate.
+		// Draw at natural glyph metrics with an identity text matrix. A non-unit
+		// horizontal text matrix makes some PDF extractors read ordinary glyph
+		// positioning as inter-letter spaces
+		// ("Hello" -> "H e l l o"), breaking search.
 		context.textMatrix = .identity
 		context.textPosition = CGPoint(x: originX, y: originY + descent)
 		CTLineDraw(line, context)

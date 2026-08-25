@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import PDFKit
 import Testing
+import UniformTypeIdentifiers
 
 @testable import MacOcrCore
 
@@ -65,10 +66,9 @@ import Testing
 		#expect(text(document).contains("Hello World"))
 	}
 
-	@Test func invisibleTextIsPositionedPerWord() async throws {
-		// The invisible layer draws one run per word at Vision's per-word box,
-		// so selecting "World" must land to the right of "Hello" rather than
-		// both starting at the line origin (the old line-level behavior).
+	@Test func invisibleTextPreservesWordOrderAndApproximatePosition() async throws {
+		// A line-level run preserves Vision's whitespace while Core Text still
+		// gives each word its own selection bounds in reading order.
 		let document = try await render("hello.png")
 		let page = try #require(document.page(at: 0))
 
@@ -82,12 +82,38 @@ import Testing
 		let world = try selectionBounds("World")
 		#expect(
 			world.minX > hello.minX + hello.width * 0.5,
-			"'World' selection must start past 'Hello' (per-word geometry); hello: \(hello), world: \(world)"
+			"'World' selection must start past 'Hello'; hello: \(hello), world: \(world)"
 		)
 		// Each word's run is narrower than the whole line.
 		let line = hello.union(world)
 		#expect(hello.width < line.width)
 		#expect(world.width < line.width)
+	}
+
+	@Test func denseLineKeepsExplicitSpacesInExtractedText() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("spdf-dense-line")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let path = directory + "/dense-line.png"
+		let phrase = "The quick brown fox jumps over the lazy dog"
+		let context = try #require(
+			CGContext(
+				data: nil, width: 1800, height: 240, bitsPerComponent: 8, bytesPerRow: 0,
+				space: CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		)
+		context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+		context.fill(CGRect(x: 0, y: 0, width: 1800, height: 240))
+		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+		InputMatrixSupport.drawText(phrase, at: CGPoint(x: 30, y: 90), size: 32, in: context)
+		try InputMatrixSupport.write(try #require(context.makeImage()), to: path, type: .png)
+
+		let data = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
+		let document = try #require(PDFDocument(data: data))
+		#expect(text(document).contains(phrase))
+		#expect(!text(document).contains("quickbrown"))
 	}
 
 	@Test func emptyImageProducesPageWithoutText() async throws {

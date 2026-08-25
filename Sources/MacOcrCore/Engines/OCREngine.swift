@@ -111,9 +111,8 @@ public struct TextCandidate: Encodable, Sendable {
 }
 
 /// A single whitespace-separated word within an observation, positioned by
-/// Vision's per-range geometry. Not part of the JSON schema — used by the
-/// searchable-pdf layer to place one invisible text run per word so selection
-/// rectangles track the printed words instead of approximating a whole line.
+/// Vision's per-range geometry. Not part of the JSON schema; retained for
+/// searchable-PDF diagnostics and future layout refinements.
 public struct WordBox: Sendable {
 	public let text: String
 	public let boundingBox: BoundingBox
