@@ -233,6 +233,7 @@ mac-ocr searchable-pdf *.pdf                          # writes <name>.ocr.pdf fo
 mac-ocr searchable-pdf scan.pdf -o out/               # out/scan.ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'   # scan-ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout
+mac-ocr searchable-pdf scan.pdf -o scan.ocr.pdf --transcript-output scan.jsonl
 mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 ```
 
@@ -250,7 +251,9 @@ Use `--image-downsample-dpi <36–2400>` to cap the visible image layer resoluti
 
 For advanced searchable-PDF diagnostics, set `MAC_OCR_DEBUG=1`. Debug mode draws visible OCR boxes into the generated PDF and writes a JSONL sidecar next to each output PDF (`lease.pdf` → `lease.jsonl`). Each JSONL line describes one output page in page order, including source/output metadata, OCR image and PDF geometry, recognition passes, accepted and rejected observations, origin metadata, rejection reasons, word boxes, and confidence values. The overlay uses red for accepted line boxes, blue for word boxes, and orange for rejected observations. Debug mode requires file output and is rejected with `-o -`. This diagnostic schema is not a public compatibility contract; consumers should check `schemaVersion` and expect it to change.
 
-Searchable PDFs use `--ocr-strategy auto` by default. Auto mode runs full-page OCR first; for large pages with small detected text, it may run an additional recursive partitioned OCR pass, map partition detections back into page coordinates, and deduplicate likely overlaps. Partitioning cuts each region along its longer axis with overlap, then keeps splitting only while the region is still above the calibrated Vision size floor and text remains small or absent. Very large partitioned runs show an interactive warning after the full-page pass because Vision processes regions serially. Use `--ocr-strategy standard` to force full-page OCR only, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Partitioned OCR can recover small labels that Vision misses on a full page, but may add duplicate or partial text. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
+Searchable PDFs use `--ocr-strategy auto` by default. Auto mode runs full-page OCR first; for large pages with small detected text, it may run an additional recursive partitioned OCR pass, map partition detections back into page coordinates, and deduplicate likely overlaps. Partitioning cuts each region along its longer axis with overlap, then keeps splitting only while the region is still above the calibrated Vision size floor and text remains small or absent. Deduplication is page-wide: one complete partition line can supersede every overlapping fragment, including slightly different readings of the same physical line. Very large partitioned runs show an interactive warning after the full-page pass because Vision processes regions serially. Use `--ocr-strategy standard` to force full-page OCR only, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
+
+`--transcript-output <path>` writes JSONL from the same recognition results used for the invisible PDF text layer. Each record contains `page`, `pageCount`, `text`, and `skipped`. It is restricted to one input and file PDF output. A born-digital page skipped by the default text-layer check has an empty transcript and `skipped: true`, allowing callers to obtain its existing text separately without rerunning scanned pages.
 
 In non-merge mode, when **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, or when `--merge` is used, the document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
 
@@ -272,7 +275,7 @@ The "already has text" check is page-level: a scanned page carrying one small di
 
 With `--merge`, `-o <file.pdf>` and `-o -` are allowed for multiple inputs. Directory and template outputs are rejected because merged mode writes exactly one PDF.
 
-Also accepts `--ocr-all-pages` (above), `--ocr-strategy <auto|standard|partitioned>`, `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
+Also accepts `--ocr-all-pages` (above), `--ocr-strategy <auto|standard|partitioned>`, `--transcript-output <path>`, `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status
 

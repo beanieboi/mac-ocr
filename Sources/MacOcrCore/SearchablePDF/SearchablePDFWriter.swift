@@ -36,6 +36,22 @@ public enum SearchablePDF {
 		}
 	}
 
+	/// OCR text produced while building one searchable-PDF page. Consumers can
+	/// persist this alongside the PDF without paying for a second Vision pass.
+	public struct TranscriptPage: Encodable, Sendable {
+		public let page: Int
+		public let pageCount: Int
+		public let text: String
+		public let skipped: Bool
+
+		public init(page: Int, pageCount: Int, text: String, skipped: Bool) {
+			self.page = page
+			self.pageCount = pageCount
+			self.text = text
+			self.skipped = skipped
+		}
+	}
+
 	/// Render a single source into a searchable PDF and return its bytes.
 	///
 	/// `ocrAllPages` disables the born-digital skip: every PDF page is OCR'd,
@@ -64,6 +80,7 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double? = nil,
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
+		onTranscript: ((TranscriptPage) throws -> Void)? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
@@ -115,6 +132,9 @@ public enum SearchablePDF {
 					)
 				}
 				onProgress?(0, pageCount)
+				for page in 1...pageCount {
+					try onTranscript?(TranscriptPage(page: page, pageCount: pageCount, text: "", skipped: true))
+				}
 				onProgress?(pageCount, pageCount)
 				return original
 			}
@@ -144,6 +164,7 @@ public enum SearchablePDF {
 					renderOptions: renderOptions
 				)
 			},
+			onTranscript: onTranscript,
 			onWarning: onWarning,
 			onProgress: onProgress
 		)
@@ -697,11 +718,6 @@ public enum SearchablePDF {
 		}
 	}
 
-	private struct DebugMergeRejection {
-		let observation: DebugOCRObservation
-		let rejection: DebugRejection
-	}
-
 	private struct DebugPartitionStats {
 		let id: String
 		let depth: Int
@@ -864,6 +880,7 @@ public enum SearchablePDF {
 		into context: CGContext,
 		ocrStrategy: OCRStrategy,
 		debugContext: DebugContext? = nil,
+		onTranscript: ((TranscriptPage) throws -> Void)? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
@@ -962,6 +979,14 @@ public enum SearchablePDF {
 					ocrImage = nil
 					result = skippedPage(strategy: ocrStrategy, reason: "existing-text-layer")
 				}
+				try onTranscript?(
+					TranscriptPage(
+						page: plan.pageNumber,
+						pageCount: pageCount,
+						text: result.ocr.text,
+						skipped: !plan.needsOCR
+					)
+				)
 
 				writePage(
 					mediaBox: plan.displayBox,
@@ -993,6 +1018,7 @@ public enum SearchablePDF {
 			let image = page.image
 			let mediaBox = page.mediaBox
 			let result = try await recognize(image, options: options, ocrStrategy: ocrStrategy, onWarning: onWarning)
+			try onTranscript?(TranscriptPage(page: 1, pageCount: 1, text: result.ocr.text, skipped: false))
 			writePage(
 				mediaBox: mediaBox,
 				ocr: result.ocr,
@@ -1543,22 +1569,30 @@ public enum SearchablePDF {
 					debugObservations.append(debugObservation)
 					continue
 				}
-				if let rejected = merge(debugObservation, into: &acceptedObservations) {
-					if rejected.observation.id == debugObservation.id {
-						debugObservation.status = .rejected(rejected.rejection)
-						debugObservations.append(debugObservation)
-					} else {
-						rejectObservation(id: rejected.observation.id, rejection: rejected.rejection, in: &debugObservations)
-						debugObservations.append(debugObservation)
-					}
-				} else {
-					debugObservations.append(debugObservation)
-				}
+				acceptedObservations.append(debugObservation)
+				debugObservations.append(debugObservation)
 			}
 
 			if shouldSplitPartition(localResult, image: partitionImage, options: options) {
 				queue.append(contentsOf: split(partition, image: image))
 			}
+		}
+
+		let supersessions = duplicateSupersessions(in: acceptedObservations.map(\.observation))
+		for (rejectedIndex, keptIndex) in supersessions {
+			let rejected = acceptedObservations[rejectedIndex]
+			let kept = acceptedObservations[keptIndex]
+			let rejection = dedupeRejection(
+				reason: normalizedText(rejected.observation.text) == normalizedText(kept.observation.text)
+					? "duplicate"
+					: "overlapping",
+				rejected: rejected,
+				kept: kept
+			)
+			rejectObservation(id: rejected.id, rejection: rejection, in: &debugObservations)
+		}
+		acceptedObservations = acceptedObservations.enumerated().compactMap { index, observation in
+			supersessions[index] == nil ? observation : nil
 		}
 
 		let sorted = acceptedObservations.map(\.observation).sorted { lhs, rhs in
@@ -1882,57 +1916,48 @@ public enum SearchablePDF {
 		return touchesLeft || touchesTop || touchesRight || touchesBottom
 	}
 
-	private static func merge(
-		_ observation: DebugOCRObservation,
-		into observations: inout [DebugOCRObservation]
-	) -> DebugMergeRejection? {
-		guard let index = observations.firstIndex(where: { isDuplicate($0.observation, observation.observation) }) else {
-			observations.append(observation)
-			return nil
+	/// Return a map from every rejected observation index to the surviving
+	/// observation index. Partitioned OCR can emit one complete line that
+	/// overlaps several fragments from another pass, so deduplication must be
+	/// page-wide instead of stopping after the first match.
+	static func duplicateSupersessions(in observations: [Observation]) -> [Int: Int] {
+		guard observations.count > 1 else { return [:] }
+		var parents = Array(observations.indices)
+
+		func root(_ index: Int) -> Int {
+			var current = index
+			while parents[current] != current {
+				current = parents[current]
+			}
+			return current
 		}
-		let existing = observations[index]
-		let existingText = existing.observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		let newText = observation.observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		if existingText.contains(newText), existingText.count > newText.count {
-			return DebugMergeRejection(
-				observation: observation,
-				rejection: dedupeRejection(
-					reason: "contained",
-					rejected: observation,
-					kept: existing
-				)
-			)
+
+		for lhsIndex in observations.indices {
+			for rhsIndex in observations.indices where rhsIndex > lhsIndex {
+				guard isDuplicate(observations[lhsIndex], observations[rhsIndex]) else { continue }
+				let lhsRoot = root(lhsIndex)
+				let rhsRoot = root(rhsIndex)
+				if lhsRoot != rhsRoot {
+					parents[rhsRoot] = lhsRoot
+				}
+			}
 		}
-		if newText.contains(existingText), newText.count > existingText.count {
-			observations[index] = observation
-			return DebugMergeRejection(
-				observation: existing,
-				rejection: dedupeRejection(
-					reason: "contained",
-					rejected: existing,
-					kept: observation
-				)
-			)
+
+		var components: [Int: [Int]] = [:]
+		for index in observations.indices {
+			components[root(index), default: []].append(index)
 		}
-		if score(observation.observation) > score(existing.observation) {
-			observations[index] = observation
-			return DebugMergeRejection(
-				observation: existing,
-				rejection: dedupeRejection(
-					reason: "duplicate",
-					rejected: existing,
-					kept: observation
-				)
-			)
+
+		var supersessions: [Int: Int] = [:]
+		for component in components.values where component.count > 1 {
+			let kept = component.dropFirst().reduce(component[0]) { current, candidate in
+				preferredObservation(observations[candidate], over: observations[current]) ? candidate : current
+			}
+			for index in component where index != kept {
+				supersessions[index] = kept
+			}
 		}
-		return DebugMergeRejection(
-			observation: observation,
-			rejection: dedupeRejection(
-				reason: "duplicate",
-				rejected: observation,
-				kept: existing
-			)
-		)
+		return supersessions
 	}
 
 	private static func partitionRejection(for observation: Observation, options: OCROptions) -> DebugRejection? {
@@ -1996,18 +2021,77 @@ public enum SearchablePDF {
 		)
 	}
 
-	private static func isDuplicate(_ lhs: Observation, _ rhs: Observation) -> Bool {
-		let lhsText = lhs.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		let rhsText = rhs.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		let textOverlaps = lhsText == rhsText || lhsText.contains(rhsText) || rhsText.contains(lhsText)
-		guard textOverlaps else { return false }
-		if intersectionOverUnion(lhs.boundingBox, rhs.boundingBox) >= 0.5 { return true }
-		return intersectionOverSmallerArea(lhs.boundingBox, rhs.boundingBox) >= 0.6
+	static func isDuplicate(_ lhs: Observation, _ rhs: Observation) -> Bool {
+		let iou = intersectionOverUnion(lhs.boundingBox, rhs.boundingBox)
+		let overlap = intersectionOverSmallerArea(lhs.boundingBox, rhs.boundingBox)
+		guard iou >= 0.35 || overlap >= 0.6 else { return false }
+
+		// Near-identical geometry represents the same physical line even when
+		// Vision changes a character or inserts a space between passes.
+		if iou >= 0.72 { return true }
+
+		let lhsText = normalizedText(lhs.text)
+		let rhsText = normalizedText(rhs.text)
+		guard !lhsText.isEmpty, !rhsText.isEmpty else { return false }
+		if lhsText == rhsText || lhsText.contains(rhsText) || rhsText.contains(lhsText) {
+			return true
+		}
+		guard min(lhsText.count, rhsText.count) >= 8 else { return false }
+		return similarity(lhsText, rhsText) >= 0.82
+	}
+
+	private static func preferredObservation(_ candidate: Observation, over current: Observation) -> Bool {
+		let candidateText = normalizedText(candidate.text)
+		let currentText = normalizedText(current.text)
+		if candidateText.contains(currentText), candidateText.count > currentText.count {
+			return true
+		}
+		if currentText.contains(candidateText), currentText.count > candidateText.count {
+			return false
+		}
+
+		// A wider, longer line is preferable to a clipped fragment. This is the
+		// main benefit of combining full-page and partitioned observations.
+		if candidate.boundingBox.width > current.boundingBox.width * 1.15,
+			candidateText.count > currentText.count
+		{
+			return true
+		}
+		if current.boundingBox.width > candidate.boundingBox.width * 1.15,
+			currentText.count > candidateText.count
+		{
+			return false
+		}
+		return score(candidate) > score(current)
+	}
+
+	private static func normalizedText(_ text: String) -> String {
+		String(text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+	}
+
+	private static func similarity(_ lhs: String, _ rhs: String) -> Double {
+		let lhsCharacters = Array(lhs)
+		let rhsCharacters = Array(rhs)
+		guard !lhsCharacters.isEmpty, !rhsCharacters.isEmpty else { return 0 }
+		var previous = Array(0...rhsCharacters.count)
+		for (lhsOffset, lhsCharacter) in lhsCharacters.enumerated() {
+			var current = [lhsOffset + 1]
+			current.reserveCapacity(rhsCharacters.count + 1)
+			for (rhsOffset, rhsCharacter) in rhsCharacters.enumerated() {
+				let substitution = previous[rhsOffset] + (lhsCharacter == rhsCharacter ? 0 : 1)
+				current.append(min(min(previous[rhsOffset + 1] + 1, current[rhsOffset] + 1), substitution))
+			}
+			previous = current
+		}
+		let distance = previous[rhsCharacters.count]
+		return 1 - Double(distance) / Double(max(lhsCharacters.count, rhsCharacters.count))
 	}
 
 	private static func score(_ observation: Observation) -> Double {
 		var score = Double(observation.confidence)
-		if observation.source?.pass == "full" { score += 0.05 }
+		if observation.source?.pass == "partition" {
+			score += 0.02 + Double(observation.source?.depth ?? 0) * 0.005
+		}
 		if observation.source?.edgeTouching == true { score -= 0.15 } else { score += 0.05 }
 		return score
 	}

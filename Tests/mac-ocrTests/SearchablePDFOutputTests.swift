@@ -21,6 +21,56 @@ import Testing
 		#expect((document.string ?? "").contains("Hello World"))
 	}
 
+	@Test func transcriptOutputUsesTheSearchablePDFRecognitionPass() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+		let output = directory + "/hello.pdf"
+		let transcript = directory + "/transcript.jsonl"
+
+		let result = try TestSupport.run([
+			"searchable-pdf", input, "-o", output, "--transcript-output", transcript,
+		])
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let record = try #require(try jsonlObjects(at: transcript).first)
+		#expect(record["page"] as? Int == 1)
+		#expect(record["pageCount"] as? Int == 1)
+		#expect(record["skipped"] as? Bool == false)
+		#expect((record["text"] as? String)?.contains("Hello World") == true)
+	}
+
+	@Test func transcriptMarksBornDigitalPagesAsSkipped() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/digital.pdf"
+		let output = directory + "/digital-output.pdf"
+		let transcript = directory + "/transcript.jsonl"
+		try makeBornDigitalPDF().write(to: URL(fileURLWithPath: input))
+
+		let result = try TestSupport.run([
+			"searchable-pdf", input, "-o", output, "--transcript-output", transcript,
+		])
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let record = try #require(try jsonlObjects(at: transcript).first)
+		#expect(record["skipped"] as? Bool == true)
+		#expect(record["text"] as? String == "")
+	}
+
+	@Test func transcriptOutputRejectsMultipleInputs() throws {
+		let result = try TestSupport.run([
+			"searchable-pdf",
+			TestSupport.fixturePath("hello.png"),
+			TestSupport.fixturePath("document-photo.png"),
+			"--transcript-output",
+			NSTemporaryDirectory() + "/transcript.jsonl",
+		])
+
+		#expect(result.exitCode == 64)
+		#expect(result.stderr.contains("--transcript-output requires exactly one input"))
+	}
+
 	@Test func multipleInputsEachGetOwnFile() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -215,7 +265,7 @@ import Testing
 		#expect(try jsonlObjects(at: directory + "/document-photo.ocr.jsonl").count == 1)
 	}
 
-	@Test func debugPartitionedRecordsRejectedObservationsWithReasons() throws {
+	@Test func debugPartitionedRecordsCountsAndRejectionReasons() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
 		let input = TestSupport.fixturePath("document-photo.png")
@@ -235,24 +285,27 @@ import Testing
 		let partitioned = try #require(passes["partitioned"] as? [String: Any])
 		#expect(partitioned["enabled"] as? Bool == true)
 		let partitions = try #require(partitioned["partitions"] as? [[String: Any]])
-		#expect(partitions.contains { ($0["rejected"] as? Int ?? 0) > 0 })
+		#expect(!partitions.isEmpty)
+		for partition in partitions {
+			let raw = partition["raw"] as? Int ?? -1
+			let accepted = partition["accepted"] as? Int ?? -1
+			let rejected = partition["rejected"] as? Int ?? -1
+			#expect(raw == accepted + rejected)
+		}
 
 		let ocr = try #require(record["ocr"] as? [String: Any])
 		let observations = try #require(ocr["observations"] as? [[String: Any]])
 		let rejectedObservations = observations.filter { $0["status"] as? String == "rejected" }
-		#expect(!rejectedObservations.isEmpty)
-		let rejected = try #require(
-			rejectedObservations.first { observation in
+		for rejected in rejectedObservations.filter({ observation in
 				let origin = observation["origin"] as? [String: Any]
 				return origin?["passId"] as? String == "partition"
-			}
-		)
-		#expect(rejected["pdfBox"] == nil)
-		let origin = try #require(rejected["origin"] as? [String: Any])
-		#expect(origin["passId"] as? String == "partition")
-		#expect(origin["partitionId"] as? String != nil)
-		let rejection = try #require(rejected["rejection"] as? [String: Any])
-		#expect(rejection["reason"] as? String != nil)
+		}) {
+			#expect(rejected["pdfBox"] == nil)
+			let origin = try #require(rejected["origin"] as? [String: Any])
+			#expect(origin["partitionId"] as? String != nil)
+			let rejection = try #require(rejected["rejection"] as? [String: Any])
+			#expect(rejection["reason"] as? String != nil)
+		}
 	}
 
 	@Test func debugRejectsStdoutPDFOutput() throws {

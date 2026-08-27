@@ -91,6 +91,12 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 	@Option(name: .long, help: "OCR strategy for searchable PDFs: auto, standard, or partitioned. (default: auto)")
 	var ocrStrategy: OCRStrategy = .auto
 
+	@Option(
+		name: .long,
+		help: "Write the OCR text from the searchable-PDF recognition pass as one JSON object per page. Supports one input and file output."
+	)
+	var transcriptOutput: String?
+
 	@Option(name: .long, help: "PDF rendering DPI for OCR: 'auto' (default) or an integer 72–600.")
 	var pdfDpi: String = "auto"
 
@@ -104,6 +110,17 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		try imageDownsampleDpi?.requireDPI(name: "--image-downsample-dpi")
 		if debugEnabled, output == "-" {
 			throw ValidationError("MAC_OCR_DEBUG=1 requires file PDF output; -o - is not supported.")
+		}
+		if transcriptOutput != nil {
+			if merge {
+				throw ValidationError("--transcript-output cannot be combined with --merge.")
+			}
+			if output == "-" {
+				throw ValidationError("--transcript-output requires file PDF output; -o - is not supported.")
+			}
+			if resolveImageSources(files: files).count != 1 {
+				throw ValidationError("--transcript-output requires exactly one input.")
+			}
 		}
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
@@ -176,6 +193,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 				try ensureParentDirectory(forFile: path)
 				let debugOutput = debugOutput(forPDFPath: path)
 				defer { debugOutput.map(removeTempDebugOutput) }
+				var transcript: [SearchablePDF.TranscriptPage] = []
 				let data = try await SearchablePDF.render(
 					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
 					ocrAllPages: ocrAllPages,
@@ -184,6 +202,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 					imageDownsampleDpi: imageDownsampleDpi,
 					ocrStrategy: ocrStrategy,
 					debugOptions: debugOutput?.options,
+					onTranscript: transcriptOutput == nil ? nil : { transcript.append($0) },
 					onWarning: { reporter.warning($0) },
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
@@ -191,6 +210,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 				// output (e.g. a re-run's [name].ocr.pdf) with a truncated PDF.
 				try data.write(to: URL(fileURLWithPath: path), options: .atomic)
 				try debugOutput.map(commitDebugOutput)
+				if let transcriptOutput {
+					try writeTranscript(transcript, to: transcriptOutput, pdfPath: path, debugOutput: debugOutput)
+				}
 				reporter.finish(outputPath: path)
 			} catch {
 				// ErrorSink clears the transient counter line itself before
@@ -268,6 +290,31 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		var options: SearchablePDF.DebugOptions {
 			SearchablePDF.DebugOptions(jsonlURL: tempURL)
 		}
+	}
+
+	private func writeTranscript(
+		_ pages: [SearchablePDF.TranscriptPage],
+		to path: String,
+		pdfPath: String,
+		debugOutput: DebugOutput?
+	) throws {
+		let transcriptURL = URL(fileURLWithPath: normalizedFilePath(path))
+		let transcriptKey = collisionKey(transcriptURL.path)
+		guard transcriptKey != collisionKey(pdfPath) else {
+			throw MessageError("--transcript-output must not overwrite the PDF output")
+		}
+		if let debugOutput, transcriptKey == collisionKey(debugOutput.finalURL.path) {
+			throw MessageError("--transcript-output must not overwrite the MAC_OCR_DEBUG sidecar")
+		}
+		try ensureParentDirectory(forFile: transcriptURL.path)
+		let encoder = JSONEncoder()
+		encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+		var data = Data()
+		for page in pages {
+			data.append(try encoder.encode(page))
+			data.append(0x0A)
+		}
+		try data.write(to: transcriptURL, options: .atomic)
 	}
 
 	private var debugEnabled: Bool {
