@@ -56,6 +56,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 	)
 	var output: String?
 
+	@Option(name: .long, help: .hidden)
+	var outputFile: String?
+
 	@Flag(
 		name: .long,
 		help: "OCR every page, including pages that already have selectable text (skipped by default). Existing digital text may appear twice in copy/search."
@@ -190,28 +193,23 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 					pageCount: 1,
 					outputExtension: ".pdf"
 				)
-				try ensureParentDirectory(forFile: path)
-				let debugOutput = debugOutput(forPDFPath: path)
-				defer { debugOutput.map(removeTempDebugOutput) }
 				var transcript: [SearchablePDF.TranscriptPage] = []
-				let data = try await SearchablePDF.render(
-					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
-					ocrAllPages: ocrAllPages,
-					imageQuality: imageQuality,
-					imagePageDpi: imagePageDpi,
-					imageDownsampleDpi: imageDownsampleDpi,
-					ocrStrategy: ocrStrategy,
-					debugOptions: debugOutput?.options,
-					onTranscript: transcriptOutput == nil ? nil : { transcript.append($0) },
-					onWarning: { reporter.warning($0) },
-					onProgress: { reporter.update(done: $0, total: $1) }
-				)
-				// Atomic: a crash mid-write must not replace a previous good
-				// output (e.g. a re-run's [name].ocr.pdf) with a truncated PDF.
-				try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-				try debugOutput.map(commitDebugOutput)
+				try await writeStagedFile(path: path) { tempURL, debugOptions in
+					try await SearchablePDF.write(
+						source: source, to: tempURL, options: options, pdfDpi: pdfDpi, password: pdfPassword,
+						ocrAllPages: ocrAllPages,
+						imageQuality: imageQuality,
+						imagePageDpi: imagePageDpi,
+						imageDownsampleDpi: imageDownsampleDpi,
+						ocrStrategy: ocrStrategy,
+						debugOptions: debugOptions,
+						onTranscript: transcriptOutput == nil ? nil : { transcript.append($0) },
+						onWarning: { reporter.warning($0) },
+						onProgress: { reporter.update(done: $0, total: $1) }
+					)
+				}
 				if let transcriptOutput {
-					try writeTranscript(transcript, to: transcriptOutput, pdfPath: path, debugOutput: debugOutput)
+					try writeTranscript(transcript, to: transcriptOutput, pdfPath: path)
 				}
 				reporter.finish(outputPath: path)
 			} catch {
@@ -255,6 +253,30 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		guard let path = outputPath else {
 			preconditionFailure("merge output path is resolved before rendering")
 		}
+		try await writeStagedFile(path: path) { tempURL, debugOptions in
+			try await SearchablePDF.writeMerged(
+				sources: sources,
+				to: tempURL,
+				options: options,
+				pdfDpi: pdfDpi,
+				password: pdfPassword,
+				ocrAllPages: ocrAllPages,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi,
+				ocrStrategy: ocrStrategy,
+				debugOptions: debugOptions,
+				onWarning: { reporter.warning($0) },
+				onProgress: { reporter.update(done: $0, total: $1) }
+			)
+		}
+		reporter.finish(outputPath: path)
+	}
+
+	func writeStagedFile(
+		path: String,
+		write: (URL, SearchablePDF.DebugOptions?) async throws -> Void
+	) async throws {
 		try ensureParentDirectory(forFile: path)
 		let outputURL = URL(fileURLWithPath: path)
 		let tempURL = outputURL.deletingLastPathComponent().appendingPathComponent(
@@ -263,24 +285,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		let debugOutput = debugOutput(forPDFPath: path)
 		defer { try? FileManager.default.removeItem(at: tempURL) }
 		defer { debugOutput.map(removeTempDebugOutput) }
-		try await SearchablePDF.writeMerged(
-			sources: sources,
-			to: tempURL,
-			options: options,
-			pdfDpi: pdfDpi,
-			password: pdfPassword,
-			ocrAllPages: ocrAllPages,
-			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi,
-			imageDownsampleDpi: imageDownsampleDpi,
-			ocrStrategy: ocrStrategy,
-			debugOptions: debugOutput?.options,
-			onWarning: { reporter.warning($0) },
-			onProgress: { reporter.update(done: $0, total: $1) }
-		)
+		try await write(tempURL, debugOutput?.options)
 		try replaceFile(at: outputURL, with: tempURL)
 		try debugOutput.map(commitDebugOutput)
-		reporter.finish(outputPath: path)
 	}
 
 	private struct DebugOutput {
@@ -295,15 +302,14 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 	private func writeTranscript(
 		_ pages: [SearchablePDF.TranscriptPage],
 		to path: String,
-		pdfPath: String,
-		debugOutput: DebugOutput?
+		pdfPath: String
 	) throws {
 		let transcriptURL = URL(fileURLWithPath: normalizedFilePath(path))
 		let transcriptKey = collisionKey(transcriptURL.path)
 		guard transcriptKey != collisionKey(pdfPath) else {
 			throw MessageError("--transcript-output must not overwrite the PDF output")
 		}
-		if let debugOutput, transcriptKey == collisionKey(debugOutput.finalURL.path) {
+		if debugEnabled, transcriptKey == collisionKey(debugSidecarURL(forPDFPath: pdfPath).path) {
 			throw MessageError("--transcript-output must not overwrite the MAC_OCR_DEBUG sidecar")
 		}
 		try ensureParentDirectory(forFile: transcriptURL.path)
@@ -371,6 +377,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 	/// through; a bare path is a single static file. (`-o -` for stdout is
 	/// handled separately.)
 	private func resolvedOutputMode() throws -> OutputMode {
+		if let outputFile { return .static(outputFile) }
 		guard let output else {
 			return .template(try OutputTemplate(template: "[dir]/[name].ocr.pdf"))
 		}
@@ -384,6 +391,11 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 	}
 
 	private func validateOutputRouting() throws {
+		if outputFile != nil {
+			guard output == nil else { throw ValidationError("--output-file cannot be combined with -o") }
+			guard !merge else { throw ValidationError("--output-file cannot be combined with --merge") }
+			guard files.count == 1 else { throw ValidationError("--output-file requires exactly one input") }
+		}
 		let multipleInputs = resolveImageSources(files: files).count > 1
 		if merge {
 			try validateMergedOutputRouting()
@@ -482,6 +494,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		var sidecarPaths: Set<String> = []
 		for path in pdfPaths {
 			let sidecarPath = debugSidecarURL(forPDFPath: path).path
+			if outputFile != nil, case .file(let inputPath) = sources[0] {
+				try validateDebugSidecarPreservesInput(inputPath, sidecarPath: sidecarPath)
+			}
 			let sidecarKey = collisionKey(sidecarPath)
 			if sidecarKey == collisionKey(path) || pdfPathSet.contains(sidecarKey) {
 				throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite a PDF output. Use a .pdf output path.")
@@ -490,6 +505,22 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 				throw ValidationError("MAC_OCR_DEBUG=1 produces duplicate sidecar output '\(sidecarPath)'. Use distinct PDF output paths.")
 			}
 			sidecarPaths.insert(sidecarKey)
+		}
+	}
+
+	/// The Node file route preserves its input even when debug output is enabled.
+	private func validateDebugSidecarPreservesInput(_ inputPath: String, sidecarPath: String) throws {
+		var inputInfo = stat()
+		guard stat(inputPath, &inputInfo) == 0 else {
+			throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+		}
+		var sidecarInfo = stat()
+		guard stat(sidecarPath, &sidecarInfo) == 0 else {
+			if errno == ENOENT { return }
+			throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+		}
+		if inputInfo.st_dev == sidecarInfo.st_dev, inputInfo.st_ino == sidecarInfo.st_ino {
+			throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite the input file.")
 		}
 	}
 

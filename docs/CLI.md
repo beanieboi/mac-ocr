@@ -9,7 +9,7 @@ mac-ocr document <inputs...> [options]     # structured documents (macOS 26+)
 mac-ocr searchable-pdf <inputs...> [-o <dest>] [ocr options]
 ```
 
-Inputs are image or PDF paths, `-` for stdin, or `http(s)://` URLs (simple GET — for auth/POST/cookies, fetch upstream and pipe the bytes in; downloads are capped at 100 MiB with a 30 s request / 120 s total timeout). Images can be any format macOS decodes — PNG, JPEG, TIFF, HEIC, GIF, BMP, … Multiple inputs are processed in order. PDFs are detected by content (`%PDF-` magic bytes), not extension, and EXIF orientation is honored — reported `width`/`height` and bounding boxes are in display orientation.
+Inputs are image or PDF paths, `-` for stdin, or `http(s)://` URLs (simple GET — for auth/POST/cookies, fetch upstream and pipe the bytes in; downloads retain at most 100 MiB of response-body data and cancel when a received chunk crosses that cap. URLSession and the network stack can buffer additional bytes. Requests have a 30 s request / 120 s total timeout). Images can be any format macOS decodes — PNG, JPEG, TIFF, HEIC, GIF, BMP, … Multiple inputs are processed in order. PDFs are detected by content (`%PDF-` magic bytes), not extension, and EXIF orientation is honored — reported `width`/`height` and bounding boxes are in display orientation.
 
 ## OCR (default action)
 
@@ -274,6 +274,10 @@ The "already has text" check is page-level: a scanned page carrying one small di
 | fixed path or `-`, with ≥2 inputs | error — use a directory or `[name]` template |
 
 With `--merge`, `-o <file.pdf>` and `-o -` are allowed for multiple inputs. Directory and template outputs are rejected because merged mode writes exactly one PDF.
+
+All file destinations use file-backed output, including default adjacent files, fixed paths, directories, templates, and merged files. The writer avoids retaining the complete encoded output PDF in an application-owned memory buffer. Local PDF input opens through a file-backed Core Graphics document; an unchanged single PDF is copied directly. Stdout output remains buffered, as do stdin and URL inputs. Page plans and references, rasterization, Vision, and framework caches still consume memory; this is not a constant-memory or bounded-RSS guarantee.
+
+The command creates missing parent directories and writes to a unique sibling `.<destination-name>.<uuid>.tmp`. Only after PDF finalization and resource closure does it atomically rename that file over the destination. Before rename, failures leave an existing destination untouched. Normal thrown errors remove temporary output; process termination can leave the temporary file behind. Completion does not promise survival across power failure. A debug PDF and its JSONL sidecar are published separately, not as one atomic transaction. Existing same-path replacement behavior is supported; use distinct input/output paths to retain the source.
 
 Also accepts `--ocr-all-pages` (above), `--ocr-strategy <auto|standard|partitioned>`, `--transcript-output <path>`, `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
