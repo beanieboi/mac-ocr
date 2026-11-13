@@ -29,10 +29,18 @@ const buildSearchablePdfArgs = (options?: SearchablePdfOptions): string[] => [
 	...buildSearchablePdfOptions(options),
 ];
 
-export const createSearchablePdfSingleProcess = async (
-	input: Input,
-	options?: SearchablePdfOptions,
-): Promise<Uint8Array> => collectStdout(
+type SearchablePdfFileOptions = SearchablePdfOptions & {
+	inputPath: string;
+	outputPath: string;
+};
+
+type SearchablePdfArguments =
+	| [input: Input, options?: SearchablePdfOptions]
+	| [options: SearchablePdfFileOptions];
+
+type BytesBackend = (input: Input, options?: SearchablePdfOptions) => Promise<Uint8Array>;
+
+const bytesOneShot: BytesBackend = (input, options) => collectStdout(
 	spawnBinary([...buildSearchablePdfArgs(options), '-o', '-', '-'], {
 		input,
 		signal: options?.signal,
@@ -41,62 +49,67 @@ export const createSearchablePdfSingleProcess = async (
 	'mac-ocr searchable-pdf',
 );
 
-/**
- * Produce a searchable PDF from image or PDF bytes — the same content with an
- * invisible, selectable OCR text layer added. Returns the PDF bytes.
- *
- * ```ts
- * const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'))
- * await fs.writeFile('scan.ocr.pdf', pdf)
- * ```
- */
-export function createSearchablePdf(
-	input: Input,
-	options?: SearchablePdfOptions,
-): Promise<Uint8Array>;
+const bytesShared: BytesBackend = (input, options) => (
+	isMainThread
+		? searchablePdfWithService(
+			input,
+			buildSearchablePdfOptions(options),
+			options?.password || process.env.MAC_OCR_PDF_PASSWORD,
+			options?.signal,
+		)
+		: bytesOneShot(input, options)
+);
 
-/**
- * Write a searchable PDF between literal local paths with atomic publication.
- * File output avoids retaining the complete encoded PDF in an application-owned
- * buffer. Input/output aliases are rejected. Abort waits for child closure;
- * publication can win the race, and a killed child can leave a sibling temp file.
- */
-export function createSearchablePdf(
-	options: SearchablePdfOptions & {
-		inputPath: string;
-		outputPath: string;
-	},
-): Promise<void>;
-
-export async function createSearchablePdf(
-	input: Input | (SearchablePdfOptions & {
-		inputPath: string;
-		outputPath: string;
-	}),
-	options?: SearchablePdfOptions,
-): Promise<Uint8Array | void> {
-	if (arguments.length > 2) {
+const dispatch = async (
+	args: unknown[],
+	bytes: BytesBackend,
+): Promise<Uint8Array | void> => {
+	if (args.length > 2) {
 		throw new TypeError('createSearchablePdf accepts at most two arguments.');
 	}
+	const [input, options] = args as [unknown, SearchablePdfOptions | undefined];
 	if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) {
-		if (!input || typeof input !== 'object' || arguments.length !== 1) {
+		if (!input || typeof input !== 'object' || args.length !== 1) {
 			throw new TypeError('File mode requires one options object with inputPath and outputPath.');
 		}
-		return writeSearchablePdf(input);
+		return writeSearchablePdf(input as SearchablePdfFileOptions);
 	}
 	if (options && ('inputPath' in options || 'outputPath' in options)) {
 		throw new TypeError('Byte input cannot be combined with file paths.');
 	}
-	if (!isMainThread) {
-		return createSearchablePdfSingleProcess(input, options);
-	}
-	return searchablePdfWithService(
-		input,
-		buildSearchablePdfOptions(options),
-		options?.password || process.env.MAC_OCR_PDF_PASSWORD,
-		options?.signal,
-	);
-}
+	return bytes(input, options);
+};
+
+type CreateSearchablePdf = {
+
+	/**
+	 * Produce a searchable PDF from image or PDF bytes — the same content with an
+	 * invisible, selectable OCR text layer added. Returns the PDF bytes.
+	 *
+	 * ```ts
+	 * const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'))
+	 * await fs.writeFile('scan.ocr.pdf', pdf)
+	 * ```
+	 */
+	(input: Input, options?: SearchablePdfOptions): Promise<Uint8Array>;
+
+	/**
+	 * Write a searchable PDF between literal local paths with atomic publication.
+	 * File output avoids retaining the complete encoded PDF in an application-owned
+	 * buffer. Input/output aliases are rejected. Abort waits for child closure;
+	 * publication can win the race, and a killed child can leave a sibling temp file.
+	 */
+	(options: SearchablePdfFileOptions): Promise<void>;
+};
+
+export const createSearchablePdf = (
+	(...args: SearchablePdfArguments) => dispatch(args, bytesShared)
+) as CreateSearchablePdf;
+
+/** {@link createSearchablePdf} without the shared native service (one-shot process per call). */
+export const createSearchablePdfSingleProcess = (
+	(...args: SearchablePdfArguments) => dispatch(args, bytesOneShot)
+) as CreateSearchablePdf;
 
 const checkAborted = (signal?: AbortSignal) => {
 	if (signal?.aborted) {
@@ -129,10 +142,7 @@ const validateFilePath = (value: string): void => {
  * A killed child can leave a sibling .<destination-name>.<uuid>.tmp file.
  */
 const writeSearchablePdf = async (
-	options: SearchablePdfOptions & {
-		inputPath: string;
-		outputPath: string;
-	},
+	options: SearchablePdfFileOptions,
 ): Promise<void> => {
 	const { inputPath, outputPath } = options;
 	validateFilePath(inputPath);
