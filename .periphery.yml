@@ -1,0 +1,5 @@
+retain_codable_properties: true
+# SwiftPM 6.4 defaults to swiftbuild, which doesn't write the index store where periphery looks.
+build_arguments:
+  - --build-system
+  - native
