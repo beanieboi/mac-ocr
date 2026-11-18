@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: [master, beta]
+    branches: [main]
   pull_request:
 
 # A new push to the same ref supersedes the queued/in-progress run.
