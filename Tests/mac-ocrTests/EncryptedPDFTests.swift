@@ -63,8 +63,8 @@ import Testing
 
 	@Test func ocrUnlocksStdinInput() throws {
 		// Stdin bytes take a different CGPDFDocument init than file paths
-		// (data provider vs URL — PDFLoader.swift), and stdin is the only
-		// input shape the Node API uses. Pin that decryption works there too.
+		// (data provider vs URL — PDFLoader.swift). Pin that decryption works
+		// there too.
 		let path = try makeEncryptedPDF(password: "secret")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 		let data = try Data(contentsOf: URL(fileURLWithPath: path))

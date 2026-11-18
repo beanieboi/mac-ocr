@@ -508,7 +508,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand {
 		}
 	}
 
-	/// The Node file route preserves its input even when debug output is enabled.
+	/// The file route preserves its input even when debug output is enabled.
 	private func validateDebugSidecarPreservesInput(_ inputPath: String, sidecarPath: String) throws {
 		var inputInfo = stat()
 		guard stat(inputPath, &inputInfo) == 0 else {

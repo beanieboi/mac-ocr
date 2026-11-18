@@ -10,7 +10,7 @@
 </p>
 
 > [!TIP]
-> Useful for AI agents too: instead of spending vision tokens reading documents, an agent can run `mac-ocr` locally for free. A [skill](#agent-skills) is bundled so agents know how to use it.
+> Useful for AI agents too: instead of spending vision tokens reading documents, an agent can run `mac-ocr` locally for free. A [skill](skills/mac-ocr/SKILL.md) is bundled so agents know how to use it.
 
 ### Features
 
@@ -23,17 +23,14 @@
 
 ## Install
 
-```sh
-npm install -g mac-ocr
-```
-
-Or run it without installing:
+Build from source with Xcode's Swift toolchain:
 
 ```sh
-npx mac-ocr receipt.jpg
+swift build -c release
+cp .build/release/mac-ocr ~/.local/bin/
 ```
 
-**Requirements:** macOS 10.15+. The npm package ships a prebuilt universal binary, so no Xcode or Swift toolchain is needed.
+**Requirements:** macOS 10.15+. See [CONTRIBUTING.md](CONTRIBUTING.md#release-build-universal-binary) for a size-optimized universal binary.
 
 ## Recognize text
 
@@ -116,7 +113,7 @@ In dogfooding on high-resolution scans, partitioned OCR recovered small form lab
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
-All file destinations, including ordinary and merged output, avoid retaining the complete encoded output PDF in an application-owned memory buffer. Output is finalized and closed in a sibling temporary file, then atomically replaces the destination. Missing parent directories are created. Normal errors remove the temporary file and leave an existing destination untouched before publication; process termination can leave `.<destination-name>.<uuid>.tmp` behind. Debug sidecars are published separately. Stdout and the Node bytes API still buffer the PDF. Page plans, rendering, Vision, and framework caches still consume memory; stdin and URL inputs are still buffered.
+All file destinations, including ordinary and merged output, avoid retaining the complete encoded output PDF in an application-owned memory buffer. Output is finalized and closed in a sibling temporary file, then atomically replaces the destination. Missing parent directories are created. Normal errors remove the temporary file and leave an existing destination untouched before publication; process termination can leave `.<destination-name>.<uuid>.tmp` behind. Debug sidecars are published separately. Stdout still buffers the PDF. Page plans, rendering, Vision, and framework caches still consume memory; stdin and URL inputs are still buffered.
 
 In an interactive terminal you get a live `[page/total]` progress counter. Piped or redirected runs are silent on success, so scripts stay clean.
 
@@ -162,64 +159,10 @@ List the recognition languages available on your macOS version with `mac-ocr lan
 
 See [docs/CLI.md](docs/CLI.md) for the full reference — every command and flag, plus the JSON output schema.
 
-## Node.js API
-
-The same package exposes a typed, promise-based API that wraps the binary. Inputs are image or PDF **bytes** — read files or fetch URLs in your own code and pass the bytes:
-
-```sh
-npm install mac-ocr
-```
-
-```ts
-import fs from 'node:fs/promises'
-import {
-    ocr, ocrDocument, createSearchablePdf, supportedLanguages
-} from 'mac-ocr'
-
-// Recognize text in an image or single-page PDF
-const result = await ocr(await fs.readFile('receipt.jpg'))
-console.log(result.text)
-for (const { text, confidence, boundingBox } of result.observations) { /* … */ }
-
-// Multi-page PDF: stream pages as they finish…
-for await (const page of ocr.pages(await fs.readFile('book.pdf'))) {
-    console.log(page.page, '/', page.pageCount, page.text)
-}
-// …or collect the whole thing into an array
-const pages = await Array.fromAsync(ocr.pages(await fs.readFile('book.pdf')))
-
-// Extract structured paragraphs, tables, and lists on macOS 26+
-const document = await ocrDocument(await fs.readFile('receipt.jpg'), {
-    languages: ['en']
-})
-console.log(document.documents[0]?.content.tables)
-for await (const page of ocrDocument.pages(await fs.readFile('book.pdf'))) {
-    console.log(page.page, page.text)
-}
-
-// Build a searchable PDF (returns the PDF bytes)
-const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'), { fast: true })
-await fs.writeFile('scan.ocr.pdf', pdf)
-
-// Local file-to-file output (returns void; uses the same PDF options)
-await createSearchablePdf({
-    inputPath: 'scan.pdf',
-    outputPath: 'output/scan.ocr.pdf',
-    fast: true
-})
-
-// Recognition languages supported on this macOS version
-const languages = await supportedLanguages()
-```
-
-The `createSearchablePdf` file overload requires both paths and takes recognition options and `signal` in the same object. It treats paths literally, relative to the calling process's working directory. It rejects input/output aliases, including symlinks and hard links, to preserve the input. Cancellation rejects after the child closes, but a race with atomic publication can leave a complete new destination. A killed child can leave a sibling temporary file. See [the file API reference](docs/NODE.md#createsearchablepdf-inputpath-outputpath-options-) for details.
-
-Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
-
 ## How it works
 
 `mac-ocr` is a native Swift binary built on Apple's Vision framework (`VNRecognizeTextRequest` and, on macOS 26+, `RecognizeDocumentsRequest`). Recognition happens entirely on-device — nothing is uploaded. The searchable-PDF layer is invisible text drawn with Core Graphics + Core Text, placed word by word where Vision found each word.
 
-## Agent Skills
+## Agent skill
 
-The package bundles an [agent skill](https://agentskills.io) covering the CLI and Node API — set up [`skills-npm`](https://github.com/antfu/skills-npm) in your project and coding agents discover it automatically.
+[skills/mac-ocr/SKILL.md](skills/mac-ocr/SKILL.md) is an [agent skill](https://agentskills.io) covering the CLI. Copy or symlink it into your agent's skills directory.

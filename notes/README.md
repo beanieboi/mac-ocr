@@ -1,6 +1,6 @@
 # Engineering research notes
 
-Tracked maintainer references for the tools and runtime contracts that shape mac-ocr. These files are not published in the npm package.
+Tracked maintainer references for the tools and runtime contracts that shape mac-ocr.
 
 ## Ownership
 

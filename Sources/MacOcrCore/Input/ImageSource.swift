@@ -1,9 +1,7 @@
 import Foundation
 
 /// Runtime discriminant + tagged JSON union shared with the result schema.
-/// Buffer inputs from the Node wrapper reach the CLI via stdin and encode as
-/// `{"type": "stdin"}`; the wrapper strips the `source` field entirely before
-/// returning results to its caller.
+/// Stdin inputs encode as `{"type": "stdin"}`.
 ///
 /// `Sendable`: the three cases are immutable value-only metadata (strings or
 /// no payload), so the type is trivially safe to share across actor boundaries.

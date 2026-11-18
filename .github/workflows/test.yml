@@ -42,25 +42,5 @@ jobs:
         # Vision, and parallel test suites compete for the ANE.
         run: swift test --no-parallel
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Type check
-        run: pnpm typecheck
-
       - name: Lint
-        run: pnpm lint
-
-      - name: Node API tests
-        # test:node copies the debug build to bin/mac-ocr (the wrapper's only
-        # binary location — bin/ is gitignored; prepack rebuilds for release).
-        run: pnpm test:node
+        run: swift format lint --strict --recursive --parallel Sources Tests

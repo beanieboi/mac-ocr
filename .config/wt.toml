@@ -1,7 +1,4 @@
-# Worktree create hooks. pnpm install blocks (fast, store-linked); the Swift
-# debug build warms in the background so the first `swift test` / `pnpm
-# test:node` in a new worktree is incremental instead of a full cold build.
-pre-start = "pnpm install --frozen-lockfile"
-
+# Worktree create hook: warm the Swift debug build in the background so the
+# first `swift test` in a new worktree is incremental instead of a full cold build.
 [post-start]
 build = "swift build"

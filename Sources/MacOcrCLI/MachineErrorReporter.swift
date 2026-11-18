@@ -5,8 +5,8 @@ import MacOcrCore
 
 enum MachineErrorKind: String, Codable {
 	case usage
-	/// Kept for envelope-schema stability (documented, and typed by the Node
-	/// wrapper) even though the OCR-only binary currently never emits it.
+	/// Kept for envelope-schema stability (documented)
+	/// even though the OCR-only binary currently never emits it.
 	case unavailable
 	case runtime
 	case `internal`
