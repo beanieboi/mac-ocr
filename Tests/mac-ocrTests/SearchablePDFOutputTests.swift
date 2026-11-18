@@ -400,8 +400,8 @@ import Testing
 		let observations = try #require(ocr["observations"] as? [[String: Any]])
 		let rejectedObservations = observations.filter { $0["status"] as? String == "rejected" }
 		for rejected in rejectedObservations.filter({ observation in
-				let origin = observation["origin"] as? [String: Any]
-				return origin?["passId"] as? String == "partition"
+			let origin = observation["origin"] as? [String: Any]
+			return origin?["passId"] as? String == "partition"
 		}) {
 			#expect(rejected["pdfBox"] == nil)
 			let origin = try #require(rejected["origin"] as? [String: Any])
